@@ -12,7 +12,7 @@
           "max_streams": "Gleichzeitige Streams"
         },
         "data_description": {
-          "portal_url": "z. B. http://portal.home/c/",
+          "portal_url": "z. B. portal.home/c/",
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
@@ -30,7 +30,7 @@
           "max_streams": "Gleichzeitige Streams"
         },
         "data_description": {
-          "portal_url": "z. B. http://portal.home/c/",
+          "portal_url": "z. B. portal.home/c/",
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
@@ -39,7 +39,7 @@
       }
     },
     "error": {
-      "invalid_url": "Adresse muss mit http:// oder https:// beginnen.",
+      "invalid_url": "Adresse muss mit http oder https beginnen.",
       "invalid_mac": "Ungültige MAC-Adresse.",
       "auth": "Das Portal hat die MAC-Adresse abgelehnt.",
       "cannot_connect": "Portal nicht erreichbar."

@@ -12,7 +12,7 @@
           "max_streams": "Simultaneous streams"
         },
         "data_description": {
-          "portal_url": "e.g. http://portal.home/c/",
+          "portal_url": "e.g. portal.home/c/",
           "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
           "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
@@ -30,7 +30,7 @@
           "max_streams": "Simultaneous streams"
         },
         "data_description": {
-          "portal_url": "e.g. http://portal.home/c/",
+          "portal_url": "e.g. portal.home/c/",
           "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
           "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
@@ -39,7 +39,7 @@
       }
     },
     "error": {
-      "invalid_url": "URL must start with http:// or https://.",
+      "invalid_url": "URL must start with http or https.",
       "invalid_mac": "Invalid MAC address.",
       "auth": "The portal rejected the MAC address.",
       "cannot_connect": "Cannot reach the portal."
