@@ -149,14 +149,14 @@ async def test_shutdown_stops_everything(ffmpeg, tmp_path, server):
 @pytest.fixture
 async def flaky(media):
     """Media server whose first N requests are answered 503, like the portal's MAC pool."""
-    state = {"left": 0, "hits": 0}
+    state = {"left": 0, "hits": 0, "status": 503}
 
     @web.middleware
     async def mw(request, handler):
         state["hits"] += 1
         if state["left"] > 0:
             state["left"] -= 1
-            return web.json_response({"detail": "No MAC currently eligible for selection. Retry in 8s"}, status=503)
+            return web.json_response({"detail": "No MAC currently eligible for selection. Retry in 8s"}, status=state["status"])
         return await handler(request)
 
     app = web.Application(middlewares=[mw])
@@ -280,3 +280,28 @@ async def test_crashed_ffmpeg_is_reaped(mgr, server):
     await s.proc.wait()
     await mgr.reap()
     assert s.id not in mgr.sessions
+
+
+@pytest.mark.parametrize("status", [461, 429, 502])
+async def test_unusual_busy_status_codes_are_retried_too(mgr, flaky, monkeypatch, status):
+    """ffmpeg reports codes like 461 only as '4XX' - the real portal answered live starts with 461."""
+    base, state = flaky
+    monkeypatch.setattr(streams, "RETRY_WAIT", 0.2)
+    state.update(left=1, status=status)
+    s = await mgr.start(f"{base}/live.ts", live=True)
+    assert mgr.file_for(s.id, "index.m3u8") and state["hits"] >= 2
+
+
+@pytest.mark.parametrize("line", [
+    "Error opening input files: Server returned 4XX Client Error, but not one of 40{0,1,3,4}",
+    "Error opening input files: Server returned 5XX Server Error reply",
+    "HTTP error 503 Service Unavailable",
+])  # the exact texts ffmpeg printed for the portal's 461/503 answers
+def test_retry_pattern_matches_real_ffmpeg_messages(line):
+    assert streams.RETRY_RE.search(line)
+
+
+@pytest.mark.parametrize("line", ["Server returned 404 Not Found", "Server returned 403 Forbidden",
+                                  "Connection refused", "Invalid data found when processing input"])
+def test_retry_pattern_ignores_permanent_errors(line):
+    assert not streams.RETRY_RE.search(line)

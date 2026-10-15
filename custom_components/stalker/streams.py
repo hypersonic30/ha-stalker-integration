@@ -21,7 +21,8 @@ LEAD_RESUME = 8
 VOD_WINDOW = 60  # playlist/RAM window in segments
 RETRY_WAIT = 8.0  # the portal says "Retry in 8s" when it has no free MAC
 RETRIES = 2
-RETRY_RE = re.compile(r"HTTP error (503|461|429)|Server returned (5\d\d|461|429)")
+# ffmpeg prints codes it does not know (461, 429, 503 ...) only as "4XX"/"5XX" Client/Server Error
+RETRY_RE = re.compile(r"HTTP error (503|461|429)|Server returned (4XX|5XX|5\d\d|461|429)")
 SEG_NUM = re.compile(r"^seg(\d+)\.ts$")
 MAX_RUNTIME = 8 * 3600  # absolute cap for a single ffmpeg process
 READY_TIMEOUT = 25.0
