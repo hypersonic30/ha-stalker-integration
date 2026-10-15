@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a Stalker portal",
+        "description": "The MAC address stays in Home Assistant; the card never sees it.",
+        "data": {
+          "portal_url": "Portal URL",
+          "mac": "MAC address",
+          "vod_m3u": "Movies (M3U URL, optional)",
+          "series_m3u": "Series (M3U URL, optional)",
+          "max_streams": "Simultaneous streams"
+        },
+        "data_description": {
+          "portal_url": "e.g. http://portal.home/c/",
+          "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
+          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
+          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one."
+        }
+      },
+      "reconfigure": {
+        "title": "Change Stalker portal",
+        "description": "The MAC address stays in Home Assistant; the card never sees it.",
+        "data": {
+          "portal_url": "Portal URL",
+          "mac": "MAC address",
+          "vod_m3u": "Movies (M3U URL, optional)",
+          "series_m3u": "Series (M3U URL, optional)",
+          "max_streams": "Simultaneous streams"
+        },
+        "data_description": {
+          "portal_url": "e.g. http://portal.home/c/",
+          "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
+          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
+          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one."
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "URL must start with http:// or https://.",
+      "invalid_mac": "Invalid MAC address.",
+      "auth": "The portal rejected the MAC address.",
+      "cannot_connect": "Cannot reach the portal."
+    },
+    "abort": {
+      "single_instance_allowed": "Only one portal is supported.",
+      "reconfigure_successful": "Saved."
+    }
+  }
+}

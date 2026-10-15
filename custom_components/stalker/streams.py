@@ -1,0 +1,325 @@
+"""ffmpeg-based HLS remuxing with hard limits (no video re-encoding, ever)."""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import re
+import secrets
+import signal
+import shutil
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+MAX_STREAMS_LIMIT = 3
+IDLE_TIMEOUT = 30.0  # live: seconds without a client request -> stop ffmpeg
+VOD_IDLE_TIMEOUT = 180.0  # VOD: a paused player stops fetching for a while
+LEAD_PAUSE = 20  # segments (4 s each) ffmpeg may run ahead of the player before it is suspended
+LEAD_RESUME = 8
+VOD_WINDOW = 60  # playlist/RAM window in segments
+RETRY_WAIT = 8.0  # the portal says "Retry in 8s" when it has no free MAC
+RETRIES = 2
+RETRY_RE = re.compile(r"HTTP error (503|461|429)|Server returned (5\d\d|461|429)")
+SEG_NUM = re.compile(r"^seg(\d+)\.ts$")
+MAX_RUNTIME = 8 * 3600  # absolute cap for a single ffmpeg process
+READY_TIMEOUT = 25.0
+PROBE_TIMEOUT = 25.0
+PREFERRED_LANGS = ("ger", "deu", "de")
+SAFE_NAME = re.compile(r"^(index\.m3u8|seg\d{1,7}\.ts)$")
+
+_URL = re.compile(r"https?://\S+")
+_STREAM = re.compile(
+    r"Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\((\w+)\))?[^:]*: (Video|Audio|Subtitle): (\w+)"
+)
+_DURATION = re.compile(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+class StreamError(Exception):
+    """User-presentable streaming problem; text never contains source URLs."""
+
+
+@dataclass
+class Probe:
+    video_codec: str | None
+    audio_index: int | None
+    audio_codec: str | None
+    duration: float | None
+
+
+def scrub(text: str) -> str:
+    return _URL.sub("<url>", text)
+
+
+def parse_probe(stderr: str) -> Probe:
+    """Read codecs/duration from `ffmpeg -i` output and pick a German-first audio track."""
+    video = None
+    audios: list[tuple[int, str, str]] = []
+    for idx, lang, kind, codec in _STREAM.findall(stderr):
+        if kind == "Video" and video is None:
+            video = codec
+        elif kind == "Audio":
+            audios.append((int(idx), (lang or "").lower(), codec))
+    pick = next((a for a in audios if a[1] in PREFERRED_LANGS), audios[0] if audios else None)
+    m = _DURATION.search(stderr)
+    dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else None
+    return Probe(video, pick[0] if pick else None, pick[2] if pick else None, dur)
+
+
+def build_command(
+    ffmpeg: str,
+    source: str,
+    out_dir: Path,
+    *,
+    live: bool,
+    start: float = 0.0,
+    audio_index: int | None = None,
+    audio_codec: str | None = None,
+    use_nice: bool = True,
+) -> list[str]:
+    """ffmpeg argv: copy video, AAC audio (copied if already AAC), HLS into out_dir."""
+    cmd: list[str] = []
+    nice = shutil.which("nice") if use_nice else None
+    if nice:
+        cmd += [nice, "-n", "10"]
+    cmd += [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostdin"]
+    cmd += ["-protocol_whitelist", "http,https,tcp,tls,crypto"]
+    cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+    # One plain streaming connection: this portal answers extra range requests with 503.
+    cmd += ["-seekable", "0", "-rw_timeout", "15000000", "-fflags", "+genpts+discardcorrupt"]
+    if not live and start > 0:
+        cmd += ["-ss", f"{start:.3f}"]  # read-and-discard up to this point
+    cmd += ["-i", source, "-map", "0:v:0"]
+    cmd += ["-map", f"0:{audio_index}" if audio_index is not None else "0:a:0?"]
+    cmd += ["-sn", "-dn", "-c:v", "copy"]
+    if audio_codec == "aac":
+        cmd += ["-c:a", "copy"]
+    else:
+        cmd += ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
+    cmd += [
+        "-f", "hls", "-hls_time", "4", "-hls_list_size", "10" if live else str(VOD_WINDOW),
+        "-hls_flags", "delete_segments+independent_segments",
+        "-hls_segment_filename", str(out_dir / "seg%d.ts"),
+        str(out_dir / "index.m3u8"),
+    ]  # fmt: skip
+    return cmd
+
+
+@dataclass
+class Session:
+    id: str
+    dir: Path
+    proc: asyncio.subprocess.Process
+    live: bool
+    started: float = field(default_factory=time.monotonic)
+    last_access: float = field(default_factory=time.monotonic)
+    duration: float | None = None
+    start_offset: float = 0.0
+    stderr: list[str] = field(default_factory=list)
+    reader: asyncio.Task | None = None
+    requested: int = -1  # highest segment number a client has fetched
+    paused: bool = False
+
+
+def default_base_dir() -> Path:
+    shm = Path("/dev/shm")
+    root = shm if shm.is_dir() and os.access(shm, os.W_OK) else Path(tempfile.gettempdir())
+    return root / "ha-stalker"
+
+
+class StreamManager:
+    def __init__(self, ffmpeg: str, base_dir: Path | None = None, max_streams: int = 1) -> None:
+        self.ffmpeg = ffmpeg
+        self.base_dir = base_dir or default_base_dir()
+        self.max_streams = max(1, min(MAX_STREAMS_LIMIT, max_streams))
+        self.sessions: dict[str, Session] = {}
+        self._lock = asyncio.Lock()
+        self._reaper: asyncio.Task | None = None
+        self.use_nice = True
+
+    # -- lifecycle ------------------------------------------------------
+    async def start_reaper(self) -> None:
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        for old in self.base_dir.iterdir():  # leftovers from a crash
+            shutil.rmtree(old, ignore_errors=True)
+        self._reaper = asyncio.create_task(self._reap_loop())
+
+    async def shutdown(self) -> None:
+        if self._reaper:
+            self._reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reaper
+        for sid in list(self.sessions):
+            await self.stop(sid)
+
+    async def _reap_loop(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            await self.reap()
+
+    async def reap(self) -> None:
+        now = time.monotonic()
+        for s in list(self.sessions.values()):
+            idle = IDLE_TIMEOUT if s.live else VOD_IDLE_TIMEOUT
+            crashed = s.proc.returncode not in (None, 0)  # exit 0 = source ended, files stay playable
+            if crashed or now - s.last_access > idle or now - s.started > MAX_RUNTIME:
+                await self.stop(s.id)
+            elif not s.live and s.proc.returncode is None:
+                self._flow_control(s)
+
+    @staticmethod
+    def _produced(s: Session) -> int:
+        nums = [int(m.group(1)) for f in s.dir.glob("seg*.ts") if (m := SEG_NUM.match(f.name))]
+        return max(nums) if nums else -1
+
+    def _flow_control(self, s: Session) -> None:
+        """Suspend ffmpeg while it is far ahead of the player; resume when the player catches up."""
+        lead = self._produced(s) - max(s.requested, 0)
+        try:
+            if not s.paused and lead >= LEAD_PAUSE:
+                os.kill(s.proc.pid, signal.SIGSTOP)
+                s.paused = True
+            elif s.paused and lead <= LEAD_RESUME:
+                os.kill(s.proc.pid, signal.SIGCONT)
+                s.paused = False
+        except ProcessLookupError:
+            pass
+
+    # -- probing ---------------------------------------------------------
+    async def probe(self, source: str) -> Probe:
+        _check_source(source)
+        for attempt in range(RETRIES + 1):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self.ffmpeg, "-hide_banner", "-nostdin",
+                    "-protocol_whitelist", "http,https,tcp,tls,crypto",
+                    "-seekable", "0", "-rw_timeout", "15000000", "-i", source,
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                )  # fmt: skip
+                _, err = await asyncio.wait_for(proc.communicate(), PROBE_TIMEOUT)
+            except asyncio.TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                raise StreamError("probe_timeout") from None
+            except OSError:
+                raise StreamError("ffmpeg_missing") from None
+            text = err.decode("utf-8", "replace")
+            if RETRY_RE.search(text) and attempt < RETRIES:
+                await asyncio.sleep(RETRY_WAIT)  # portal has no free MAC right now
+                continue
+            return parse_probe(text)
+        raise StreamError("portal_busy")  # pragma: no cover
+
+    # -- start / stop -------------------------------------------------------
+    async def make_room(self) -> None:
+        """Stop the oldest stream(s) until one more fits.
+
+        Call this BEFORE asking the portal for a new link: a portal usually allows only
+        one stream per MAC, so the old stream has to be gone first.
+        """
+        async with self._lock:
+            while len(self.sessions) >= self.max_streams:
+                await self.stop(min(self.sessions.values(), key=lambda s: s.started).id)
+
+    async def start(self, source: str, *, live: bool, start: float = 0.0) -> Session:
+        _check_source(source)
+        audio_index = audio_codec = duration = None
+        if not live:
+            p = await self.probe(source)
+            if p.video_codec != "h264":
+                raise StreamError("video_codec_unsupported")
+            audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
+        for attempt in range(RETRIES + 1):
+            s = await self._spawn(source, live, start, audio_index, audio_codec, duration)
+            try:
+                await self._wait_ready(s)
+                return s
+            except StreamError:
+                busy = bool(RETRY_RE.search("\n".join(s.stderr)))
+                await self.stop(s.id)
+                if not busy:
+                    raise
+                if attempt == RETRIES:
+                    raise StreamError("portal_busy") from None
+                await asyncio.sleep(RETRY_WAIT)
+        raise StreamError("portal_busy")  # pragma: no cover
+
+    async def _spawn(self, source, live, start, audio_index, audio_codec, duration) -> Session:
+        async with self._lock:
+            while len(self.sessions) >= self.max_streams:
+                oldest = min(self.sessions.values(), key=lambda s: s.started)
+                await self.stop(oldest.id)
+            sid = secrets.token_hex(16)  # unguessable: it is the only credential of the HLS URLs
+            out = self.base_dir / sid
+            out.mkdir(parents=True)
+            cmd = build_command(
+                self.ffmpeg, source, out, live=live, start=start,
+                audio_index=audio_index, audio_codec=audio_codec, use_nice=self.use_nice,
+            )  # fmt: skip
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+                )
+            except OSError:
+                shutil.rmtree(out, ignore_errors=True)
+                raise StreamError("ffmpeg_missing") from None
+            s = Session(sid, out, proc, live, duration=duration, start_offset=start)
+            s.reader = asyncio.create_task(self._read_stderr(s))
+            self.sessions[sid] = s
+            return s
+
+    async def _read_stderr(self, s: Session) -> None:
+        assert s.proc.stderr
+        async for line in s.proc.stderr:
+            s.stderr = (s.stderr + [scrub(line.decode("utf-8", "replace").strip())])[-20:]
+
+    async def _wait_ready(self, s: Session) -> None:
+        index = s.dir / "index.m3u8"
+        deadline = time.monotonic() + READY_TIMEOUT
+        while time.monotonic() < deadline:
+            if index.exists() and "#EXTINF" in index.read_text(errors="replace"):
+                return
+            if s.proc.returncode is not None:
+                await asyncio.sleep(0.1)  # let the stderr reader catch up before reporting
+                raise StreamError("stream_failed:" + (s.stderr[-1] if s.stderr else "exit"))
+            await asyncio.sleep(0.25)
+        raise StreamError("stream_timeout")
+
+    async def stop(self, sid: str) -> None:
+        s = self.sessions.pop(sid, None)
+        if not s:
+            return
+        if s.proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                if s.paused:
+                    os.kill(s.proc.pid, signal.SIGCONT)  # a stopped process would not see SIGTERM
+                s.proc.terminate()
+            try:
+                await asyncio.wait_for(s.proc.wait(), 5)
+            except asyncio.TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    s.proc.kill()
+                await s.proc.wait()
+        if s.reader:
+            s.reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await s.reader
+        shutil.rmtree(s.dir, ignore_errors=True)
+
+    # -- serving -------------------------------------------------------------
+    def file_for(self, sid: str, name: str) -> Path | None:
+        """Path of a playlist/segment of a live session, or None. Marks the session active."""
+        s = self.sessions.get(sid)
+        if not s or not SAFE_NAME.match(name):
+            return None
+        s.last_access = time.monotonic()
+        if m := SEG_NUM.match(name):
+            s.requested = max(s.requested, int(m.group(1)))
+        p = s.dir / name
+        return p if p.is_file() else None
+
+
+def _check_source(source: str) -> None:
+    if not source.lower().startswith(("http://", "https://")):
+        raise StreamError("bad_source")

@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit Stalker-Portal verbinden",
+        "description": "Die MAC-Adresse bleibt in Home Assistant; die Karte sieht sie nie.",
+        "data": {
+          "portal_url": "Portal-Adresse",
+          "mac": "MAC-Adresse",
+          "vod_m3u": "Filme (M3U-Adresse, optional)",
+          "series_m3u": "Serien (M3U-Adresse, optional)",
+          "max_streams": "Gleichzeitige Streams"
+        },
+        "data_description": {
+          "portal_url": "z. B. http://portal.home/c/",
+          "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
+          "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
+          "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
+          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten."
+        }
+      },
+      "reconfigure": {
+        "title": "Stalker-Portal ändern",
+        "description": "Die MAC-Adresse bleibt in Home Assistant; die Karte sieht sie nie.",
+        "data": {
+          "portal_url": "Portal-Adresse",
+          "mac": "MAC-Adresse",
+          "vod_m3u": "Filme (M3U-Adresse, optional)",
+          "series_m3u": "Serien (M3U-Adresse, optional)",
+          "max_streams": "Gleichzeitige Streams"
+        },
+        "data_description": {
+          "portal_url": "z. B. http://portal.home/c/",
+          "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
+          "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
+          "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
+          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten."
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Adresse muss mit http:// oder https:// beginnen.",
+      "invalid_mac": "Ungültige MAC-Adresse.",
+      "auth": "Das Portal hat die MAC-Adresse abgelehnt.",
+      "cannot_connect": "Portal nicht erreichbar."
+    },
+    "abort": {
+      "single_instance_allowed": "Nur ein Portal möglich.",
+      "reconfigure_successful": "Gespeichert."
+    }
+  }
+}
