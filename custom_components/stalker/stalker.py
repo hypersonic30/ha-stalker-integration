@@ -15,6 +15,8 @@ UA = (
 ENDPOINTS = ("/portal.php", "/stalker_portal/server/load.php", "/server/load.php")
 MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 TIMEOUT = aiohttp.ClientTimeout(total=20)
+BULK_TIMEOUT = aiohttp.ClientTimeout(total=90)  # the whole programme guide is ~5 MB
+DESCR_MAX = 300
 
 
 class StalkerError(Exception):
@@ -47,7 +49,9 @@ class StalkerClient:
     def host(self) -> str:
         return self._host
 
-    async def _raw(self, params: dict[str, str], token: str | None) -> Any:
+    async def _raw(
+        self, params: dict[str, str], token: str | None, timeout: aiohttp.ClientTimeout = TIMEOUT
+    ) -> Any:
         headers = {
             "User-Agent": UA,
             "X-User-Agent": "Model: MAG250; Link: WiFi",
@@ -57,7 +61,7 @@ class StalkerClient:
             headers["Authorization"] = f"Bearer {token}"
         url = f"{self._host}{self._endpoint}?{urlencode({**params, 'JsHttpRequest': '1-xml'})}"
         try:
-            async with self._session.get(url, headers=headers, timeout=TIMEOUT) as r:
+            async with self._session.get(url, headers=headers, timeout=timeout) as r:
                 if r.status in (401, 403):
                     raise StalkerAuthError("auth")
                 if r.status >= 400:
@@ -96,14 +100,16 @@ class StalkerClient:
         self._endpoint = None
         raise last
 
-    async def call(self, params: dict[str, str]) -> Any:
+    async def call(
+        self, params: dict[str, str], timeout: aiohttp.ClientTimeout = TIMEOUT
+    ) -> Any:
         """Call with automatic handshake and one re-handshake on auth failure."""
         async with self._lock:
             for attempt in (0, 1):
                 if not self._token:
                     await self._handshake()
                 try:
-                    return await self._raw(params, self._token)
+                    return await self._raw(params, self._token, timeout)
                 except StalkerAuthError:
                     self._token = None
                     if attempt:
@@ -146,6 +152,28 @@ class StalkerClient:
             }
             for e in js
         ]
+
+    async def epg_all(self) -> dict[str, list[dict[str, Any]]]:
+        """Programme guide of every channel in one call: {channel id: [programme, ...]} by start."""
+        js = await self.call({"type": "itv", "action": "get_epg_info", "period": "6"}, BULK_TIMEOUT)
+        data = js.get("data") if isinstance(js, dict) else None
+        out: dict[str, list[dict[str, Any]]] = {}
+        for ch_id, items in (data.items() if isinstance(data, dict) else ()):
+            progs = []
+            for e in items if isinstance(items, list) else ():
+                try:
+                    start, stop = int(e["start_timestamp"]), int(e["stop_timestamp"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if stop > start:
+                    progs.append({
+                        "title": str(e.get("name") or ""),
+                        "descr": str(e.get("descr") or "")[:DESCR_MAX],
+                        "start": start, "stop": stop,
+                    })  # fmt: skip
+            if progs:
+                out[str(ch_id)] = sorted(progs, key=lambda p: p["start"])
+        return out
 
     async def create_link(self, cmd: str) -> str:
         """Resolve a channel's cmd into a one-shot stream URL (call right before playing)."""

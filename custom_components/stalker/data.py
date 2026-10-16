@@ -10,7 +10,7 @@ from typing import Any
 
 import aiohttp
 
-from .const import CACHE_TTL, M3U_MAX_BYTES
+from .const import CACHE_TTL, EPG_TTL, M3U_MAX_BYTES
 from .m3u import Entry, Episode, Series, group_series, parse_m3u
 from .stalker import StalkerClient, StalkerError, host_of
 
@@ -45,7 +45,7 @@ class StalkerData:
         self._session = session
         self._vod_url = vod_url or None
         self._series_url = series_url or None
-        self._live, self._vod, self._series = _Cache(), _Cache(), _Cache()
+        self._live, self._vod, self._series, self._epg = _Cache(), _Cache(), _Cache(), _Cache()
         # Streams may only come from hosts the user configured themselves.
         self.allowed_hosts = {client.host}
         for u in (self._vod_url, self._series_url):
@@ -61,9 +61,9 @@ class StalkerData:
         return self._series_url is not None
 
     # -- loading -----------------------------------------------------------
-    async def _cached(self, cache: _Cache, loader):
+    async def _cached(self, cache: _Cache, loader, ttl: float = CACHE_TTL):
         async with cache.lock:
-            if cache.value is None or time.monotonic() - cache.at > CACHE_TTL:
+            if cache.value is None or time.monotonic() - cache.at > ttl:
                 try:
                     cache.value = await loader()
                     cache.at = time.monotonic()
@@ -113,6 +113,14 @@ class StalkerData:
 
         return await self._cached(self._series, load)
 
+    async def guide(self) -> dict[str, list[dict[str, Any]]]:
+        """Programme guide of all channels; empty (never an error) when the portal has none."""
+        try:
+            return await self._cached(self._epg, self.client.epg_all, EPG_TTL)
+        except (StalkerError, aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            _LOGGER.warning("Programme guide unavailable: %s", type(err).__name__)
+            return {}
+
     # -- resolving -----------------------------------------------------------
     async def source_for(self, kind: str, item_id: str) -> str:
         """Stream URL for an id. For live TV this opens a fresh one-shot link."""
@@ -141,4 +149,20 @@ class StalkerData:
                 for ep in eps:
                     if ep.stream_id == item_id:
                         return ep
+        raise NotFound
+
+    async def describe(self, kind: str, item_id: str) -> dict[str, Any]:
+        """Server-side metadata stored with a progress entry (the client only sends ids)."""
+        if kind == "vod":
+            e = (await self.vod()).get(item_id)
+            if not e:
+                raise NotFound
+            return {"title": e.title, "logo": e.logo}
+        if kind == "episode":
+            for sid, s in (await self.series()).items():
+                for eps in s.seasons.values():
+                    for ep in eps:
+                        if ep.stream_id == item_id:
+                            return {"title": s.title, "logo": s.logo, "sid": sid,
+                                    "season": ep.season, "episode": ep.episode}  # fmt: skip
         raise NotFound

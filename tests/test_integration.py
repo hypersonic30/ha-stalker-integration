@@ -1,4 +1,5 @@
 """Whole integration inside a real Home Assistant: config flow, views, real ffmpeg."""
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -141,6 +142,14 @@ async def test_play_vod_and_episode(hass, entry, hass_client):
     assert j["start"] == 2.0
 
 
+async def test_play_hevc_is_transcoded_and_reported(hass, entry, hass_client):
+    c = await hass_client()
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m2"})).json()
+    assert j["transcoding"] is True
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m1"})).json()
+    assert j["transcoding"] is False
+
+
 async def test_play_refuses_bad_input_and_foreign_hosts(hass, entry, hass_client):
     c = await hass_client()
     p = lambda body: c.post("/api/stalker/play", json=body)  # noqa: E731
@@ -149,8 +158,6 @@ async def test_play_refuses_bad_input_and_foreign_hosts(hass, entry, hass_client
     assert (await p({"kind": "vod", "id": "nope"})).status == 404
     assert (await p({"kind": "file", "id": "x"})).status == 400
     assert (await p({"kind": "vod"})).status == 400
-    r = await p({"kind": "vod", "id": "m2"})  # hevc
-    assert r.status == 502 and (await r.json())["code"] == "video_codec_unsupported"
 
 
 async def test_new_play_stops_old_stream_before_asking_portal(hass, entry, hass_client, portal):
@@ -178,3 +185,118 @@ async def test_unload_stops_ffmpeg(hass, entry, hass_client):
     s = hass.data[DOMAIN]["streams"].sessions[j["session"]]
     await hass.config_entries.async_unload(entry.entry_id)
     assert s.proc.returncode is not None
+
+
+# -- programme guide ---------------------------------------------------------
+async def test_nowplaying_and_guide_come_from_one_bulk_call(hass, entry, hass_client, portal):
+    c = await hass_client()
+    np = (await (await c.get("/api/stalker/nowplaying")).json())["items"]
+    assert np["10"]["t"] == "Now" and np["10"]["n"] == "Next" and "11" not in np
+    now = time.time()
+    g = (await (await c.get(f"/api/stalker/guide?ids=10,11&from={now - 100}&to={now + 5000}")).json())["items"]
+    assert [p["t"] for p in g["10"]] == ["Now", "Next"] and g["11"] == []  # Past is out of the window
+    assert len(g["10"][0]["d"]) == 300  # descriptions are trimmed
+    assert sum(1 for x in portal.calls if x["action"] == "get_epg_info") == 1  # cached
+
+
+async def test_guide_rejects_bad_input_and_caps_channels(hass, entry, hass_client):
+    c = await hass_client()
+    assert (await c.get("/api/stalker/guide?ids=10&from=x&to=1")).status == 400
+    assert (await c.get("/api/stalker/guide?ids=10")).status == 400
+    ids = ",".join(str(i) for i in range(500))
+    r = await (await c.get(f"/api/stalker/guide?ids={ids}&from=0&to=10")).json()
+    assert len(r["items"]) == 60
+
+
+async def test_epg_view_uses_the_guide_and_survives_a_broken_portal_guide(hass, entry, hass_client, portal):
+    c = await hass_client()
+    items = (await (await c.get("/api/stalker/epg/10")).json())["items"]
+    assert [i["title"] for i in items] == ["Now", "Next"]
+    data = hass.data[DOMAIN]["data"]
+    data._epg.value, data._epg.at = None, 0.0
+
+    async def boom():
+        from custom_components.stalker.stalker import StalkerError
+        raise StalkerError("x")
+
+    data.client.epg_all = boom
+    assert (await (await c.get("/api/stalker/nowplaying")).json()) == {"items": {}}  # no error
+    assert (await c.get("/api/stalker/epg/10")).status == 200  # falls back to the short EPG
+
+
+# -- watch progress ------------------------------------------------------------
+async def _second_user(hass, hass_client):
+    u = await hass.auth.async_create_user("Zweite", group_ids=["system-users"])
+    t = await hass.auth.async_create_refresh_token(u, "https://stalker.test/")
+    return await hass_client(hass.auth.async_create_access_token(t))
+
+
+async def test_progress_is_saved_per_user_and_never_shared(hass, entry, hass_client):
+    a = await hass_client()
+    b = await _second_user(hass, hass_client)
+    r = await a.post("/api/stalker/progress", json={"kind": "vod", "id": "m1", "pos": 100, "dur": 1000})
+    assert r.status == 200
+    ja = await (await a.get("/api/stalker/progress")).json()
+    assert {k: ja["items"]["vod:m1"][k] for k in ("pos", "dur", "done")} == {"pos": 100, "dur": 1000, "done": False}
+    assert ja["items"]["vod:m1"]["t"] > 0
+    assert ja["resume"][0]["id"] == "m1" and ja["resume"][0]["title"] == "Alpha Movie - 2020"
+    jb = await (await b.get("/api/stalker/progress")).json()
+    assert jb == {"items": {}, "resume": []}
+
+
+async def test_progress_done_threshold_and_resume_rules(hass, entry, hass_client):
+    c = await hass_client()
+    post = lambda **k: c.post("/api/stalker/progress", json=k)  # noqa: E731
+    await post(kind="vod", id="m1", pos=10, dur=1000)  # just opened: not offered
+    j = await (await c.get("/api/stalker/progress")).json()
+    assert j["resume"] == [] and j["items"]["vod:m1"]["done"] is False
+    await post(kind="vod", id="m1", pos=930, dur=1000)  # 93 % = watched
+    j = await (await c.get("/api/stalker/progress")).json()
+    assert j["items"]["vod:m1"]["done"] is True and j["resume"] == []
+
+
+async def test_series_resume_offers_the_next_episode_after_a_finished_one(hass, entry, hass_client):
+    c = await hass_client()
+    await c.post("/api/stalker/progress", json={"kind": "episode", "id": "e1", "pos": 95, "dur": 100})
+    r = (await (await c.get("/api/stalker/progress")).json())["resume"]
+    assert [(x["id"], x["label"]) for x in r] == [("e2", "Staffel 1 · Folge 2 · als Nächstes")]
+    await c.post("/api/stalker/progress", json={"kind": "episode", "id": "e2", "pos": 50, "dur": 100})
+    r = (await (await c.get("/api/stalker/progress")).json())["resume"]
+    assert [(x["id"], x["pos"]) for x in r] == [("e2", 50)]  # unfinished episode wins
+    await c.post("/api/stalker/progress", json={"kind": "episode", "id": "e2", "pos": 99, "dur": 100})
+    assert (await (await c.get("/api/stalker/progress")).json())["resume"] == []  # series finished
+
+
+async def test_progress_mark_watched_and_unwatched(hass, entry, hass_client):
+    c = await hass_client()
+    await c.post("/api/stalker/progress", json={"kind": "episode", "id": "e1", "done": True})
+    j = await (await c.get("/api/stalker/progress")).json()
+    assert j["items"]["episode:e1"]["done"] is True
+    await c.post("/api/stalker/progress", json={"kind": "episode", "id": "e1", "done": False})
+    assert (await (await c.get("/api/stalker/progress")).json())["items"] == {}
+
+
+async def test_progress_rejects_bad_input_and_unknown_items(hass, entry, hass_client):
+    c = await hass_client()
+    post = lambda body: c.post("/api/stalker/progress", json=body)  # noqa: E731
+    assert (await post({"kind": "live", "id": "10", "pos": 1, "dur": 2})).status == 400
+    assert (await post({"kind": "vod", "id": "m1", "pos": "x"})).status == 400
+    assert (await post({"kind": "vod", "id": "m1", "done": "yes"})).status == 400
+    assert (await post({"kind": "vod", "pos": 1})).status == 400
+    assert (await post({"kind": "vod", "id": "nope", "pos": 100, "dur": 1000})).status == 404
+    assert (await post({"kind": "vod", "id": "m1", "pos": float("nan")})).status in (400, 200)
+    anon = await (await c.get("/api/stalker/progress")).json()
+    assert "vod:nope" not in anon["items"]
+
+
+async def test_progress_survives_reload_and_needs_login(hass, entry, hass_client, hass_client_no_auth):
+    c = await hass_client()
+    await c.post("/api/stalker/progress", json={"kind": "vod", "id": "m1", "pos": 100, "dur": 1000})
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "vod:m1" in (await (await c.get("/api/stalker/progress")).json())["items"]
+    anon = await hass_client_no_auth()
+    assert (await anon.get("/api/stalker/progress")).status == 401
+    assert (await anon.post("/api/stalker/progress", json={})).status == 401
+    assert (await anon.get("/api/stalker/nowplaying")).status == 401
+    assert (await anon.get("/api/stalker/guide?ids=1&from=0&to=1")).status == 401

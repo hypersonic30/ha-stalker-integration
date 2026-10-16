@@ -1,4 +1,6 @@
 """Minimal Stalker portal + media server for tests."""
+import time
+
 from aiohttp import web
 
 MAC = "00:1A:79:AA:BB:CC"
@@ -30,6 +32,7 @@ class FakePortal:
         if request.headers.get("Authorization") != f"Bearer {self.token}":
             return web.Response(status=401)
         self.calls.append(dict(q))
+        now = int(time.time())
         js = {
             "get_profile": {"id": "1"},
             "get_genres": [{"id": "1", "title": "News"}, {"id": "*", "title": "All"}],
@@ -42,6 +45,15 @@ class FakePortal:
             "get_short_epg": [
                 {"name": "Now", "descr": "d", "start_timestamp": "100", "stop_timestamp": "200"}
             ],
+            "get_epg_info": {"data": {
+                "10": [
+                    {"name": "Past", "descr": "old", "start_timestamp": str(now - 7200), "stop_timestamp": str(now - 3600)},
+                    {"name": "Now", "descr": "x" * 500, "start_timestamp": str(now - 600), "stop_timestamp": str(now + 600)},
+                    {"name": "Next", "descr": "n", "start_timestamp": str(now + 600), "stop_timestamp": str(now + 4200)},
+                    {"name": "Broken", "descr": "b", "start_timestamp": "x", "stop_timestamp": "y"},
+                ],
+                "99": [{"name": "Unknown channel", "start_timestamp": str(now), "stop_timestamp": str(now + 60)}],
+            }},
             "create_link": {"cmd": f"ffmpeg http://127.0.0.1:{request.url.port}/media/live.ts"},
         }.get(act)
         if js is None:

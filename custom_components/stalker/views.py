@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
@@ -10,12 +11,16 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-from .data import NotFound, StalkerData, series_id
+from .data import NotFound, StalkerData
+from .progress import KINDS, Progress, resume_list
 from .stalker import StalkerAuthError, StalkerError
 from .streams import SAFE_NAME, StreamError, StreamManager
 
 _LOGGER = logging.getLogger(__name__)
 PAGE_MAX = 100
+GUIDE_MAX_CHANNELS = 60
+GUIDE_MAX_SPAN = 36 * 3600
+MAX_DURATION = 24 * 3600
 HLS_PREFIX = "/api/stalker/hls"
 CONTENT_TYPES = {".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t"}
 
@@ -87,7 +92,57 @@ class EpgView(_Base):
         async def fn(data: StalkerData, streams: StreamManager):
             if channel_id not in (await data.live())["channels"]:
                 raise NotFound
-            return {"items": await data.client.epg(channel_id)}
+            now = time.time()
+            items = [p for p in (await data.guide()).get(channel_id, []) if p["stop"] > now][:3]
+            return {"items": items or await data.client.epg(channel_id)}
+
+        return await self._run(fn)
+
+
+class NowPlayingView(_Base):
+    """What is on right now (and next) for every channel that has a guide: one small call."""
+
+    url = "/api/stalker/nowplaying"
+    name = "api:stalker:nowplaying"
+
+    async def get(self, request: web.Request) -> web.Response:
+        async def fn(data: StalkerData, streams: StreamManager):
+            now, out = time.time(), {}
+            for ch_id, progs in (await data.guide()).items():
+                for i, p in enumerate(progs):
+                    if p["start"] <= now < p["stop"]:
+                        item = {"t": p["title"], "s": p["start"], "e": p["stop"]}
+                        if i + 1 < len(progs):
+                            item["n"], item["ns"] = progs[i + 1]["title"], progs[i + 1]["start"]
+                        out[ch_id] = item
+                        break
+            return {"items": out}
+
+        return await self._run(fn)
+
+
+class GuideView(_Base):
+    """Programmes of some channels in a time window (the TV guide grid)."""
+
+    url = "/api/stalker/guide"
+    name = "api:stalker:guide"
+
+    async def get(self, request: web.Request) -> web.Response:
+        try:
+            ids = [i for i in request.query.get("ids", "").split(",") if i][:GUIDE_MAX_CHANNELS]
+            start = float(request.query["from"])
+            stop = float(request.query["to"])
+        except (ValueError, KeyError):
+            return _err("bad_request", 400)
+        stop = min(stop, start + GUIDE_MAX_SPAN)
+
+        async def fn(data: StalkerData, streams: StreamManager):
+            guide = await data.guide()
+            return {"items": {
+                i: [{"t": p["title"], "d": p["descr"], "s": p["start"], "e": p["stop"]}
+                    for p in guide.get(i, []) if p["stop"] > start and p["start"] < stop]
+                for i in ids
+            }}  # fmt: skip
 
         return await self._run(fn)
 
@@ -159,6 +214,52 @@ class SeriesView(_Base):
         return await self._run(fn)
 
 
+def _user(request: web.Request) -> str:
+    return request["hass_user"].id
+
+
+class ProgressView(_Base):
+    url = "/api/stalker/progress"
+    name = "api:stalker:progress"
+
+    async def get(self, request: web.Request) -> web.Response:
+        user = _user(request)
+
+        async def fn(data: StalkerData, streams: StreamManager):
+            entries = self.hass.data[DOMAIN]["progress"].entries(user)
+            series = await data.series() if data.has_series else {}
+            return {
+                "items": {k: {f: e.get(f) for f in ("pos", "dur", "done", "t")} for k, e in entries.items()},
+                "resume": resume_list(entries, series),
+            }  # fmt: skip
+
+        return await self._run(fn)
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Save a position, or (done given) mark an item as watched / not watched."""
+        try:
+            body: dict[str, Any] = await request.json()
+            kind, item_id = str(body["kind"]), str(body["id"])
+            done = body.get("done")
+            pos, dur = float(body.get("pos", 0)), float(body.get("dur", 0))
+        except (ValueError, KeyError, TypeError):
+            return _err("bad_request", 400)
+        if kind not in KINDS or (done is not None and not isinstance(done, bool)) or dur != dur or pos != pos:
+            return _err("bad_request", 400)
+        user = _user(request)
+
+        async def fn(data: StalkerData, streams: StreamManager):
+            progress: Progress = self.hass.data[DOMAIN]["progress"]
+            meta = await data.describe(kind, item_id)
+            if done is None:
+                progress.save(user, kind, item_id, pos, min(dur, MAX_DURATION), meta)
+            else:
+                progress.mark(user, kind, item_id, done, meta)
+            return {"ok": True}
+
+        return await self._run(fn)
+
+
 class PlayView(_Base):
     url = "/api/stalker/play"
     name = "api:stalker:play"
@@ -184,6 +285,7 @@ class PlayView(_Base):
                 raise _PlayFailed(code) from None
             return {
                 "session": s.id, "live": s.live, "duration": s.duration, "start": s.start_offset,
+                "transcoding": s.transcoding,
                 "url": f"{HLS_PREFIX}/{s.id}/index.m3u8",
             }  # fmt: skip
 
@@ -242,6 +344,6 @@ class HlsView(HomeAssistantView):
 
 
 def register_views(hass: HomeAssistant) -> None:
-    for view in (InfoView, LiveView, EpgView, VodView, SeriesListView, SeriesView, PlayView,
+    for view in (InfoView, LiveView, EpgView, NowPlayingView, GuideView, ProgressView, VodView, SeriesListView, SeriesView, PlayView,
                  StopView, HlsView):  # fmt: skip
         hass.http.register_view(view(hass))

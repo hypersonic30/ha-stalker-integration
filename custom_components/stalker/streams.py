@@ -1,4 +1,5 @@
-"""ffmpeg-based HLS remuxing with hard limits (no video re-encoding, ever)."""
+"""ffmpeg-based HLS remuxing with hard limits. Video is copied; only sources whose codec
+browsers cannot play (HEVC ...) are re-encoded to H.264 (VOD only, capped at 720p)."""
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ SEG_NUM = re.compile(r"^seg(\d+)\.ts$")
 MAX_RUNTIME = 8 * 3600  # absolute cap for a single ffmpeg process
 READY_TIMEOUT = 25.0
 PROBE_TIMEOUT = 25.0
+TRANSCODE_HEIGHT = 720  # re-encoded video is scaled down to this height (CPU)
 PREFERRED_LANGS = ("ger", "deu", "de")
 SAFE_NAME = re.compile(r"^(index\.m3u8|seg\d{1,7}\.ts)$")
 
@@ -78,8 +80,9 @@ def build_command(
     audio_index: int | None = None,
     audio_codec: str | None = None,
     use_nice: bool = True,
+    transcode: bool = False,
 ) -> list[str]:
-    """ffmpeg argv: copy video, AAC audio (copied if already AAC), HLS into out_dir."""
+    """ffmpeg argv: copy video (or re-encode to H.264 if transcode), AAC audio, HLS into out_dir."""
     cmd: list[str] = []
     nice = shutil.which("nice") if use_nice else None
     if nice:
@@ -93,7 +96,15 @@ def build_command(
         cmd += ["-ss", f"{start:.3f}"]  # read-and-discard up to this point
     cmd += ["-i", source, "-map", "0:v:0"]
     cmd += ["-map", f"0:{audio_index}" if audio_index is not None else "0:a:0?"]
-    cmd += ["-sn", "-dn", "-c:v", "copy"]
+    cmd += ["-sn", "-dn"]
+    if transcode:
+        cmd += [
+            "-vf", f"scale=-2:'min({TRANSCODE_HEIGHT},ih)',format=yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "6M", "-bufsize", "12M",
+            "-force_key_frames", "expr:gte(t,n_forced*4)",
+        ]  # fmt: skip
+    else:
+        cmd += ["-c:v", "copy"]
     if audio_codec == "aac":
         cmd += ["-c:a", "copy"]
     else:
@@ -121,6 +132,7 @@ class Session:
     reader: asyncio.Task | None = None
     requested: int = -1  # highest segment number a client has fetched
     paused: bool = False
+    transcoding: bool = False
 
 
 def default_base_dir() -> Path:
@@ -226,13 +238,15 @@ class StreamManager:
     async def start(self, source: str, *, live: bool, start: float = 0.0) -> Session:
         _check_source(source)
         audio_index = audio_codec = duration = None
+        transcode = False
         if not live:
             p = await self.probe(source)
-            if p.video_codec != "h264":
+            if p.video_codec is None:
                 raise StreamError("video_codec_unsupported")
+            transcode = p.video_codec != "h264"  # HEVC, VC-1, MPEG-4 ... browsers cannot play these
             audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
         for attempt in range(RETRIES + 1):
-            s = await self._spawn(source, live, start, audio_index, audio_codec, duration)
+            s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode)
             try:
                 await self._wait_ready(s)
                 return s
@@ -246,7 +260,9 @@ class StreamManager:
                 await asyncio.sleep(RETRY_WAIT)
         raise StreamError("portal_busy")  # pragma: no cover
 
-    async def _spawn(self, source, live, start, audio_index, audio_codec, duration) -> Session:
+    async def _spawn(
+        self, source, live, start, audio_index, audio_codec, duration, transcode=False
+    ) -> Session:
         async with self._lock:
             while len(self.sessions) >= self.max_streams:
                 oldest = min(self.sessions.values(), key=lambda s: s.started)
@@ -257,6 +273,7 @@ class StreamManager:
             cmd = build_command(
                 self.ffmpeg, source, out, live=live, start=start,
                 audio_index=audio_index, audio_codec=audio_codec, use_nice=self.use_nice,
+                transcode=transcode,
             )  # fmt: skip
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -265,7 +282,7 @@ class StreamManager:
             except OSError:
                 shutil.rmtree(out, ignore_errors=True)
                 raise StreamError("ffmpeg_missing") from None
-            s = Session(sid, out, proc, live, duration=duration, start_offset=start)
+            s = Session(sid, out, proc, live, duration=duration, start_offset=start, transcoding=transcode)
             s.reader = asyncio.create_task(self._read_stderr(s))
             self.sessions[sid] = s
             return s

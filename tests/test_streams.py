@@ -35,7 +35,7 @@ def test_parse_probe_falls_back_to_first_audio():
 def test_command_never_reencodes_video_and_limits_protocols(tmp_path):
     cmd = build_command("ffmpeg", "http://x/y", tmp_path, live=True, use_nice=False)
     assert cmd[cmd.index("-c:v") + 1] == "copy"
-    assert "libx264" not in cmd and "-ss" not in cmd and "-readrate" not in cmd
+    assert "libx264" not in cmd and "-vf" not in cmd and "-ss" not in cmd and "-readrate" not in cmd
     assert cmd[cmd.index("-seekable") + 1] == "0"  # one connection: the portal rate-limits extras
     assert cmd[cmd.index("-protocol_whitelist") + 1] == "http,https,tcp,tls,crypto"
     vod = build_command("ffmpeg", "http://x/y", tmp_path, live=False, start=30,
@@ -91,10 +91,33 @@ async def test_vod_picks_german_track(mgr, server, monkeypatch):
     assert seen["audio_index"] == 2
 
 
-async def test_non_h264_video_is_refused_without_starting_ffmpeg(mgr, server):
+async def test_hevc_is_reencoded_to_h264_capped_at_720p(mgr, server, ffmpeg):
+    s = await mgr.start(f"{server}/hevc.mkv", live=False)
+    assert s.transcoding
+    info = ffinfo(ffmpeg, next(s.dir.glob("seg*.ts")))
+    assert "Video: h264" in info and "Video: hevc" not in info and "Audio: aac" in info
+
+
+async def test_h264_is_never_reencoded(mgr, server):
+    s = await mgr.start(f"{server}/movie.mkv", live=False)
+    assert not s.transcoding
+
+
+async def test_source_without_video_is_refused_without_starting_ffmpeg(mgr, server, monkeypatch):
+    async def probe(source):
+        return streams.Probe(None, None, None, 10.0)
+
+    monkeypatch.setattr(mgr, "probe", probe)
     with pytest.raises(StreamError, match="video_codec_unsupported"):
-        await mgr.start(f"{server}/hevc.mkv", live=False)
+        await mgr.start(f"{server}/movie.mkv", live=False)
     assert not mgr.sessions and not list(mgr.base_dir.iterdir())
+
+
+def test_transcode_command_scales_down_and_cuts_segments_at_keyframes(tmp_path):
+    cmd = build_command("ffmpeg", "http://x/y", tmp_path, live=False, transcode=True, use_nice=False)
+    assert cmd[cmd.index("-c:v") + 1] == "libx264"
+    assert "min(720,ih)" in cmd[cmd.index("-vf") + 1]
+    assert "expr:gte(t,n_forced*4)" in cmd
 
 
 async def test_second_stream_replaces_first(mgr, server):
