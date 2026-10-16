@@ -39,6 +39,8 @@ def media(ffmpeg, tmp_path_factory):
           "-g", "25", "-c:a", "aac", "-f", "mpegts"])  # fmt: skip
     _make(ffmpeg, d / "long.mkv", [*v, *a[:4], "-t", "120", "-c:v", "libx264", "-preset", "ultrafast",
           "-g", "25", "-c:a", "aac"])  # fmt: skip
+    _make(ffmpeg, d / "hevclive.ts", [*v, *a[:4], "-t", "12", "-c:v", "libx265", "-g", "25", "-c:a", "aac",
+          "-f", "mpegts"])  # fmt: skip
     _make(ffmpeg, d / "hevc.mkv", [*v, *a[:4], "-t", "3", "-c:v", "libx265", "-c:a", "aac"])
     return d
 

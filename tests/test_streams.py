@@ -368,3 +368,37 @@ def test_retry_pattern_matches_real_ffmpeg_messages(line):
                                   "Connection refused", "Invalid data found when processing input"])
 def test_retry_pattern_ignores_permanent_errors(line):
     assert not streams.RETRY_RE.search(line)
+
+
+async def test_live_hevc_is_reencoded_with_a_fresh_link(mgr, server, ffmpeg):
+    links = []
+
+    async def relink():
+        links.append(1)
+        return f"{server}/hevclive.ts"
+
+    s = await mgr.start(f"{server}/hevclive.ts", live=True, relink=relink)
+    assert s.transcoding and links == [1] and len(mgr.sessions) == 1
+    info = ffinfo(ffmpeg, next(s.dir.glob("seg*.ts")))
+    assert "Video: h264" in info and "Video: hevc" not in info and "Audio: aac" in info
+
+
+async def test_live_hevc_is_copied_for_players_that_decode_it(mgr, server, ffmpeg):
+    s = await mgr.start(f"{server}/hevclive.ts", live=True, hevc_ok=True)
+    assert s.fmp4 and not s.transcoding
+    assert "Video: hevc" in ffinfo(ffmpeg, mgr.file_for(s.id, "init.mp4"))
+
+
+async def test_live_hevc_respects_the_transcode_switch(mgr, server):
+    mgr.transcode = False
+    with pytest.raises(StreamError, match="transcode_disabled"):
+        await mgr.start(f"{server}/hevclive.ts", live=True)
+    assert not mgr.sessions
+
+
+async def test_live_h264_is_still_started_once(mgr, server):
+    async def relink():
+        raise AssertionError("h264 must not be restarted")
+
+    s = await mgr.start(f"{server}/live.ts", live=True, relink=relink)
+    assert not s.transcoding and not s.fmp4

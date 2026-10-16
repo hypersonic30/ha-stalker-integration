@@ -45,6 +45,12 @@ class StreamError(Exception):
     """User-presentable streaming problem; text never contains source URLs."""
 
 
+class _WrongCodec(Exception):
+    def __init__(self, codec: str) -> None:
+        super().__init__(codec)
+        self.codec = codec
+
+
 @dataclass
 class Probe:
     video_codec: str | None
@@ -92,7 +98,8 @@ def build_command(
     nice = shutil.which("nice") if use_nice else None
     if nice:
         cmd += [nice, "-n", "10"]
-    cmd += [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostdin"]
+    # Live is not probed first (a second portal connection), so ffmpeg itself reports the codecs.
+    cmd += [ffmpeg, "-hide_banner", "-loglevel", "info" if live else "warning", "-nostats", "-nostdin"]
     cmd += ["-protocol_whitelist", "http,https,tcp,tls,crypto"]
     cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
     # One plain streaming connection: this portal answers extra range requests with 503.
@@ -103,9 +110,10 @@ def build_command(
     cmd += ["-map", f"0:{audio_index}" if audio_index is not None else "0:a:0?"]
     cmd += ["-sn", "-dn"]
     if transcode:
+        fps = "fps=25," if live else ""  # 50 fps live streams would double the CPU load
         cmd += [
-            "-vf", f"scale=-2:'min({TRANSCODE_HEIGHT},ih)',format=yuv420p",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "6M", "-bufsize", "12M",
+            "-vf", f"{fps}scale=-2:'min({TRANSCODE_HEIGHT},ih)',format=yuv420p",
+            "-c:v", "libx264", "-preset", "ultrafast" if live else "veryfast", "-crf", "23", "-maxrate", "6M", "-bufsize", "12M",
             "-force_key_frames", "expr:gte(t,n_forced*4)",
         ]  # fmt: skip
     else:
@@ -142,6 +150,7 @@ class Session:
     paused: bool = False
     transcoding: bool = False
     fmp4: bool = False
+    video_codec: str | None = None  # read from ffmpeg's own output (live only)
 
 
 def default_base_dir() -> Path:
@@ -247,11 +256,12 @@ class StreamManager:
                 await self.stop(min(self.sessions.values(), key=lambda s: s.started).id)
 
     async def start(
-        self, source: str, *, live: bool, start: float = 0.0, hevc_ok: bool = False
+        self, source: str, *, live: bool, start: float = 0.0, hevc_ok: bool = False, relink=None
     ) -> Session:
         _check_source(source)
         audio_index = audio_codec = duration = None
         transcode = fmp4 = False
+        restarted = False
         if not live:
             p = await self.probe(source)
             if p.video_codec is None:
@@ -269,8 +279,24 @@ class StreamManager:
         for attempt in range(RETRIES + 1):
             s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode, fmp4)
             try:
-                await self._wait_ready(s)
+                await self._wait_ready(s, check_codec=live and not transcode and not fmp4)
                 return s
+            except _WrongCodec as wrong:
+                # Live video the player cannot take as it is (HEVC, MPEG-2 ...): start again.
+                await self.stop(s.id)
+                if restarted:
+                    raise StreamError("video_codec_unsupported") from None
+                restarted = True
+                if wrong.codec == "hevc" and hevc_ok:
+                    fmp4 = True
+                elif self.transcode:
+                    transcode = True
+                else:
+                    raise StreamError("transcode_disabled") from None
+                _LOGGER.info("Live stream is %s, starting again as %s", wrong.codec, "copy" if fmp4 else "re-encode")
+                if relink:  # the portal's link is one-shot
+                    source = await relink()
+                    _check_source(source)
             except StreamError:
                 busy = bool(RETRY_RE.search("\n".join(s.stderr)))
                 await self.stop(s.id)
@@ -311,12 +337,17 @@ class StreamManager:
     async def _read_stderr(self, s: Session) -> None:
         assert s.proc.stderr
         async for line in s.proc.stderr:
-            s.stderr = (s.stderr + [scrub(line.decode("utf-8", "replace").strip())])[-20:]
+            text = scrub(line.decode("utf-8", "replace").strip())
+            if s.live and s.video_codec is None and (m := _STREAM.search(text)) and m.group(3) == "Video":
+                s.video_codec = m.group(4)
+            s.stderr = (s.stderr + [text])[-20:]
 
-    async def _wait_ready(self, s: Session) -> None:
+    async def _wait_ready(self, s: Session, check_codec: bool = False) -> None:
         index = s.dir / "index.m3u8"
         deadline = time.monotonic() + READY_TIMEOUT
         while time.monotonic() < deadline:
+            if check_codec and s.video_codec and s.video_codec != "h264":
+                raise _WrongCodec(s.video_codec)
             if index.exists() and "#EXTINF" in index.read_text(errors="replace"):
                 return
             if s.proc.returncode is not None:

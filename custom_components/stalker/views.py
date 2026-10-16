@@ -361,7 +361,10 @@ class PlayView(_Base):
             await streams.make_room()  # old stream must be gone before the portal sees a new one
             source = await data.source_for(kind, item_id, sid)
             try:
-                s = await streams.start(source, live=kind == "live", start=start, hevc_ok=hevc_ok)
+                s = await streams.start(
+                    source, live=kind == "live", start=start, hevc_ok=hevc_ok,
+                    relink=lambda: data.source_for(kind, item_id, sid),
+                )
             except StreamError as err:
                 code, _, detail = str(err).partition(":")
                 _LOGGER.warning("Stream failed: %s %s", code, detail)
