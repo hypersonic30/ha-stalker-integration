@@ -325,3 +325,13 @@ async def test_progress_survives_reload_and_needs_login(hass, entry, hass_client
     assert (await anon.post("/api/stalker/progress", json={})).status == 401
     assert (await anon.get("/api/stalker/nowplaying")).status == 401
     assert (await anon.get("/api/stalker/guide?ids=1&from=0&to=1")).status == 401
+
+
+async def test_play_reports_tracks_and_honours_the_audio_pick(hass, entry, hass_client):
+    c = await hass_client()
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m1"})).json()
+    assert [a["lang"] for a in j["audio"]] == ["eng", "ger"] and j["audio_index"] == 2 and j["subs"] == []
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m1", "audio": 1})).json()
+    assert j["audio_index"] == 1
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m1", "audio": "1"})).json()
+    assert j["audio_index"] == 2  # not an integer: ignored

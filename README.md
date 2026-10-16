@@ -25,7 +25,7 @@ eine private Adresse (192.168…, localhost), die nur in einer Liste steht, wird
 - **Filme und Serien** kommen aus M3U-Listen, die du angibst (optional). Serien werden über `serie-title`, `tvg-season`, `tvg-episode` gruppiert.
 - Die Streams laufen **durch Home Assistant**: ffmpeg packt sie zu HLS um. **Video wird kopiert**, nur Audio wird zu AAC (Browser und Apps spielen kein DTS/AC3).
   Nur wenn ein Film einen Codec hat, den Browser nicht abspielen (z. B. HEVC), kodiert ffmpeg das Video nach H.264 um (höchstens 720p, `veryfast`).
-  Das kostet deutlich mehr CPU (4K-HEVC: über 2 Kerne, auf einem kleinen Server langsamer als Echtzeit); die Karte zeigt „umkodiert“ an. Live-TV wird nie umkodiert.
+  Das kostet deutlich mehr CPU (4K-HEVC: über 2 Kerne, auf einem kleinen Server langsamer als Echtzeit); die Karte zeigt „umkodiert“ an. Bei Live-Sendern mit HEVC (z. B. „24/7 Paw Patrol“) gilt dasselbe (720p, 25 fps, `ultrafast`), ohne Umkodieren-Schalter bleibt dort das Bild aus.
   Kann der Player HEVC selbst (Safari/iOS, Chrome mit Hardware-Decoder), meldet die Karte das, und HEVC wird nur kopiert (fMP4, kaum CPU, HDR bleibt erhalten).
   In den Einstellungen der Integration lässt sich das mit dem Schalter *Nicht abspielbares Video umkodieren* ausschalten; solche Filme werden dann mit einem Hinweis abgelehnt.
   So geht es auch unterwegs und ohne Mixed-Content-Probleme.
@@ -52,7 +52,7 @@ HACS → Benutzerdefiniertes Repository → Integration, dann *Einstellungen →
 zuerst die gemeinsamen Einstellungen, danach **Portal hinzufügen** (Stalker: Portal-Adresse, MAC, optional M3U-Adressen für Filme und Serien).
 
 ## Bekannte Grenzen
-- Untertitel (PGS) und Tonspur-Wahl fehlen noch; bei Mehrfach-Ton wird Deutsch bevorzugt.
+- Tonspur und Text-Untertitel (SRT/ASS) sind in der Karte wählbar (Knöpfe im Film-Player; Standard bei Mehrfach-Ton: Deutsch). Ein Tonwechsel startet den Stream neu (5–20 s). Bild-Untertitel (PGS, DVD) gehen nicht, dafür müsste das Video umkodiert werden.
 - Umkodierte Filme (HEVC) brauchen auf schwacher Hardware evtl. zu viel CPU und ruckeln; Spulen im Film startet den Stream neu (je nach Portal 5–20 s).
 - Logos und Poster lädt die Card direkt vom Portal (im LAN ok).
 

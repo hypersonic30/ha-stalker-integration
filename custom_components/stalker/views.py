@@ -24,7 +24,7 @@ MAX_DURATION = 24 * 3600
 HLS_PREFIX = "/api/stalker/hls"
 CONTENT_TYPES = {
     ".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t",
-    ".m4s": "video/iso.segment", ".mp4": "video/mp4",
+    ".m4s": "video/iso.segment", ".mp4": "video/mp4", ".vtt": "text/vtt",
 }
 
 
@@ -350,6 +350,8 @@ class PlayView(_Base):
             kind, item_id = str(body["kind"]), str(body["id"])
             start = max(0.0, float(body.get("start", 0)))
             hevc_ok = body.get("hevc") is True  # the player can decode HEVC itself
+            audio = body.get("audio")
+            audio = audio if isinstance(audio, int) and not isinstance(audio, bool) else None
             sid = str(body["sid"]) if body.get("sid") is not None else None
             portal_arg = str(body["portal"]) if body.get("portal") else None
         except (ValueError, KeyError, TypeError):
@@ -362,7 +364,7 @@ class PlayView(_Base):
             source = await data.source_for(kind, item_id, sid)
             try:
                 s = await streams.start(
-                    source, live=kind == "live", start=start, hevc_ok=hevc_ok,
+                    source, live=kind == "live", start=start, hevc_ok=hevc_ok, audio=audio,
                     relink=lambda: data.source_for(kind, item_id, sid),
                 )
             except StreamError as err:
@@ -372,6 +374,9 @@ class PlayView(_Base):
             return {
                 "session": s.id, "live": s.live, "duration": s.duration, "start": s.start_offset,
                 "transcoding": s.transcoding, "hevc": s.fmp4,
+                "audio": [{"index": i, "lang": lang, "codec": codec} for i, lang, codec in s.audios],
+                "audio_index": s.audio_index,
+                "subs": [{"index": i, "lang": lang} for i, lang, _ in s.subs],
                 "url": f"{HLS_PREFIX}/{s.id}/index.m3u8",
             }  # fmt: skip
 
@@ -425,7 +430,7 @@ class HlsView(HomeAssistantView):
             body = path.read_bytes()
         except OSError:  # segment rotated away between check and read
             return web.Response(status=404)
-        headers = {"Cache-Control": "no-store" if name.endswith(".m3u8") else "max-age=60"}
+        headers = {"Cache-Control": "no-store" if name.endswith((".m3u8", ".vtt")) else "max-age=60"}
         return web.Response(body=body, content_type=CONTENT_TYPES[path.suffix], headers=headers)
 
 

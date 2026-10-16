@@ -35,6 +35,13 @@ def media(ffmpeg, tmp_path_factory):
     _make(ffmpeg, d / "movie.mkv", [*v, *a, "-t", "12", "-map", "0:v", "-map", "1:a", "-map", "2:a",
           "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-c:a", "ac3",
           "-metadata:s:a:0", "language=eng", "-metadata:s:a:1", "language=ger"])  # fmt: skip
+    (d / "s.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nHallo Welt\n\n2\n00:00:05,000 --> 00:00:07,000\nZweite Zeile\n")
+    (d / "e.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nHello world\n")
+    _make(ffmpeg, d / "subs.mkv", [*v, *a, "-i", str(d / "s.srt"), "-i", str(d / "e.srt"), "-t", "12",
+          "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3", "-map", "4",
+          "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-c:a", "aac", "-c:s", "srt",
+          "-metadata:s:a:0", "language=ger", "-metadata:s:a:1", "language=eng",
+          "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng"])  # fmt: skip
     _make(ffmpeg, d / "live.ts", [*v, *a[:4], "-t", "12", "-c:v", "libx264", "-preset", "ultrafast",
           "-g", "25", "-c:a", "aac", "-f", "mpegts"])  # fmt: skip
     _make(ffmpeg, d / "long.mkv", [*v, *a[:4], "-t", "120", "-c:v", "libx264", "-preset", "ultrafast",

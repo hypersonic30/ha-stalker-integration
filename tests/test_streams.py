@@ -125,7 +125,7 @@ async def test_hevc_flag_is_ignored_for_other_codecs(mgr, server):
 
 async def test_probe_failure_text_is_not_reported_as_a_codec_problem(mgr, monkeypatch):
     async def probe(source):
-        return streams.Probe(None, None, None, None, ("Invalid data found when processing input",))
+        return streams.Probe(None, None, None, None, tail=("Invalid data found when processing input",))
 
     monkeypatch.setattr(mgr, "probe", probe)
     with pytest.raises(StreamError, match="stream_failed"):
@@ -402,3 +402,42 @@ async def test_live_h264_is_still_started_once(mgr, server):
 
     s = await mgr.start(f"{server}/live.ts", live=True, relink=relink)
     assert not s.transcoding and not s.fmp4
+
+
+async def test_probe_lists_audio_tracks_and_text_subtitles(mgr, server):
+    p = await mgr.probe(f"{server}/subs.mkv")
+    assert [a[1] for a in p.audios] == ["ger", "eng"] and [s[1] for s in p.subs] == ["ger", "eng"]
+
+
+async def test_picked_audio_track_and_subtitles_are_served(mgr, server, ffmpeg):
+    p = await mgr.probe(f"{server}/subs.mkv")
+    eng = p.audios[1][0]
+    s = await mgr.start(f"{server}/subs.mkv", live=False, audio=eng)
+    assert s.audio_index == eng and [x[1] for x in s.subs] == ["ger", "eng"]
+    sub = mgr.file_for(s.id, f"sub{p.subs[0][0]}.vtt")
+    for _ in range(40):  # ffmpeg writes the file while it reads on
+        if sub and "Hallo Welt" in sub.read_text():
+            break
+        await asyncio.sleep(0.25)
+    assert "Hallo Welt" in sub.read_text() and sub.read_text().startswith("WEBVTT")
+    info = ffinfo(ffmpeg, next(s.dir.glob("seg*.ts")))
+    assert "Audio: aac" in info
+
+
+async def test_unknown_audio_pick_falls_back_to_default(mgr, server):
+    s = await mgr.start(f"{server}/subs.mkv", live=False, audio=99)
+    assert s.audio_index == (await mgr.probe(f"{server}/subs.mkv")).audio_index
+
+
+async def test_probe_is_cached_for_track_changes(mgr, server, monkeypatch):
+    calls = []
+    orig = mgr._probe
+
+    async def counting(src):
+        calls.append(src)
+        return await orig(src)
+
+    monkeypatch.setattr(mgr, "_probe", counting)
+    await mgr.probe(f"{server}/subs.mkv")
+    await mgr.probe(f"{server}/subs.mkv")
+    assert len(calls) == 1

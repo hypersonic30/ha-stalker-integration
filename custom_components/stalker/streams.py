@@ -32,7 +32,10 @@ READY_TIMEOUT = 25.0
 PROBE_TIMEOUT = 25.0
 TRANSCODE_HEIGHT = 720  # re-encoded video is scaled down to this height (CPU)
 PREFERRED_LANGS = ("ger", "deu", "de")
-SAFE_NAME = re.compile(r"^(index\.m3u8|init\.mp4|seg\d{1,7}\.(?:ts|m4s))$")
+SAFE_NAME = re.compile(r"^(index\.m3u8|init\.mp4|seg\d{1,7}\.(?:ts|m4s)|sub\d{1,3}\.vtt)$")
+TEXT_SUBS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}  # picture subtitles (PGS, DVD) cannot be shown
+PROBE_KEEP = 16
+PROBE_TTL = 3600.0
 
 _URL = re.compile(r"https?://\S+")
 _STREAM = re.compile(
@@ -57,6 +60,8 @@ class Probe:
     audio_index: int | None
     audio_codec: str | None
     duration: float | None
+    audios: tuple[tuple[int, str, str], ...] = ()  # (stream index, language, codec)
+    subs: tuple[tuple[int, str, str], ...] = ()  # text subtitles only
     tail: tuple[str, ...] = ()  # last scrubbed stderr lines, for the log when nothing was found
 
 
@@ -68,16 +73,20 @@ def parse_probe(stderr: str) -> Probe:
     """Read codecs/duration from `ffmpeg -i` output and pick a German-first audio track."""
     video = None
     audios: list[tuple[int, str, str]] = []
+    subs: list[tuple[int, str, str]] = []
     for idx, lang, kind, codec in _STREAM.findall(stderr):
         if kind == "Video" and video is None:
             video = codec
         elif kind == "Audio":
             audios.append((int(idx), (lang or "").lower(), codec))
+        elif kind == "Subtitle" and codec in TEXT_SUBS:
+            subs.append((int(idx), (lang or "").lower(), codec))
     pick = next((a for a in audios if a[1] in PREFERRED_LANGS), audios[0] if audios else None)
     m = _DURATION.search(stderr)
     dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else None
     tail = tuple(scrub(ln.strip()) for ln in stderr.splitlines() if ln.strip())[-6:]
-    return Probe(video, pick[0] if pick else None, pick[2] if pick else None, dur, tail)
+    return Probe(video, pick[0] if pick else None, pick[2] if pick else None, dur,
+                 tuple(audios), tuple(subs), tail)  # fmt: skip
 
 
 def build_command(
@@ -92,6 +101,7 @@ def build_command(
     use_nice: bool = True,
     transcode: bool = False,
     fmp4: bool = False,
+    subs: tuple[int, ...] = (),
 ) -> list[str]:
     """ffmpeg argv: copy video (or re-encode to H.264 if transcode), AAC audio, HLS into out_dir."""
     cmd: list[str] = []
@@ -131,6 +141,8 @@ def build_command(
     if fmp4:
         cmd += ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"]
     cmd += ["-hls_segment_filename", str(out_dir / ("seg%d.m4s" if fmp4 else "seg%d.ts")), str(out_dir / "index.m3u8")]
+    for i in subs:  # text subtitles grow as ffmpeg reads on; the card polls them
+        cmd += ["-map", f"0:{i}", "-c:s", "webvtt", "-flush_packets", "1", "-f", "webvtt", str(out_dir / f"sub{i}.vtt")]
     return cmd
 
 
@@ -151,6 +163,9 @@ class Session:
     transcoding: bool = False
     fmp4: bool = False
     video_codec: str | None = None  # read from ffmpeg's own output (live only)
+    audios: tuple = ()  # (stream index, language, codec) of the source
+    subs: tuple = ()  # text subtitles written next to the playlist as sub<N>.vtt
+    audio_index: int | None = None
 
 
 def default_base_dir() -> Path:
@@ -162,6 +177,7 @@ def default_base_dir() -> Path:
 class StreamManager:
     def __init__(self, ffmpeg: str, base_dir: Path | None = None, max_streams: int = 1, transcode: bool = True
     ) -> None:
+        self._probes: dict[str, tuple[float, Probe]] = {}
         self.transcode = transcode  # allow re-encoding unplayable video (CPU heavy)
         self.ffmpeg = ffmpeg
         self.base_dir = base_dir or default_base_dir()
@@ -221,7 +237,20 @@ class StreamManager:
 
     # -- probing ---------------------------------------------------------
     async def probe(self, source: str) -> Probe:
+        """Probe a source; results are kept for a while so changing the audio track costs no connection."""
         _check_source(source)
+        now = time.monotonic()
+        hit = self._probes.get(source)
+        if hit and now - hit[0] < PROBE_TTL:
+            return hit[1]
+        p = await self._probe(source)
+        if p.video_codec is not None:
+            self._probes[source] = (now, p)
+            for k in sorted(self._probes, key=lambda k: self._probes[k][0])[:-PROBE_KEEP]:
+                del self._probes[k]
+        return p
+
+    async def _probe(self, source: str) -> Probe:
         for attempt in range(RETRIES + 1):
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -256,10 +285,12 @@ class StreamManager:
                 await self.stop(min(self.sessions.values(), key=lambda s: s.started).id)
 
     async def start(
-        self, source: str, *, live: bool, start: float = 0.0, hevc_ok: bool = False, relink=None
+        self, source: str, *, live: bool, start: float = 0.0, hevc_ok: bool = False, relink=None,
+        audio: int | None = None,
     ) -> Session:
         _check_source(source)
         audio_index = audio_codec = duration = None
+        audios = subs = ()
         transcode = fmp4 = False
         restarted = False
         if not live:
@@ -276,8 +307,14 @@ class StreamManager:
                 if not self.transcode:
                     raise StreamError("transcode_disabled")
             audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
+            audios, subs = p.audios, p.subs
+            chosen = next((a for a in audios if a[0] == audio), None)
+            if chosen:  # the viewer picked a track
+                audio_index, audio_codec = chosen[0], chosen[2]
         for attempt in range(RETRIES + 1):
-            s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode, fmp4)
+            s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode, fmp4,
+                                  tuple(i for i, _, _ in subs))  # fmt: skip
+            s.audios, s.subs, s.audio_index = audios, subs, audio_index
             try:
                 await self._wait_ready(s, check_codec=live and not transcode and not fmp4)
                 return s
@@ -308,7 +345,7 @@ class StreamManager:
         raise StreamError("portal_busy")  # pragma: no cover
 
     async def _spawn(
-        self, source, live, start, audio_index, audio_codec, duration, transcode=False, fmp4=False
+        self, source, live, start, audio_index, audio_codec, duration, transcode=False, fmp4=False, subs=()
     ) -> Session:
         async with self._lock:
             while len(self.sessions) >= self.max_streams:
@@ -320,7 +357,7 @@ class StreamManager:
             cmd = build_command(
                 self.ffmpeg, source, out, live=live, start=start,
                 audio_index=audio_index, audio_codec=audio_codec, use_nice=self.use_nice,
-                transcode=transcode, fmp4=fmp4,
+                transcode=transcode, fmp4=fmp4, subs=subs,
             )  # fmt: skip
             try:
                 proc = await asyncio.create_subprocess_exec(
