@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import secrets
@@ -14,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_LOGGER = logging.getLogger(__name__)
 MAX_STREAMS_LIMIT = 3
 IDLE_TIMEOUT = 30.0  # live: seconds without a client request -> stop ffmpeg
 VOD_IDLE_TIMEOUT = 180.0  # VOD: a paused player stops fetching for a while
@@ -24,13 +26,13 @@ RETRY_WAIT = 8.0  # the portal says "Retry in 8s" when it has no free MAC
 RETRIES = 2
 # ffmpeg prints codes it does not know (461, 429, 503 ...) only as "4XX"/"5XX" Client/Server Error
 RETRY_RE = re.compile(r"HTTP error (503|461|429)|Server returned (4XX|5XX|5\d\d|461|429)")
-SEG_NUM = re.compile(r"^seg(\d+)\.ts$")
+SEG_NUM = re.compile(r"^seg(\d+)\.(?:ts|m4s)$")
 MAX_RUNTIME = 8 * 3600  # absolute cap for a single ffmpeg process
 READY_TIMEOUT = 25.0
 PROBE_TIMEOUT = 25.0
 TRANSCODE_HEIGHT = 720  # re-encoded video is scaled down to this height (CPU)
 PREFERRED_LANGS = ("ger", "deu", "de")
-SAFE_NAME = re.compile(r"^(index\.m3u8|seg\d{1,7}\.ts)$")
+SAFE_NAME = re.compile(r"^(index\.m3u8|init\.mp4|seg\d{1,7}\.(?:ts|m4s))$")
 
 _URL = re.compile(r"https?://\S+")
 _STREAM = re.compile(
@@ -49,6 +51,7 @@ class Probe:
     audio_index: int | None
     audio_codec: str | None
     duration: float | None
+    tail: tuple[str, ...] = ()  # last scrubbed stderr lines, for the log when nothing was found
 
 
 def scrub(text: str) -> str:
@@ -67,7 +70,8 @@ def parse_probe(stderr: str) -> Probe:
     pick = next((a for a in audios if a[1] in PREFERRED_LANGS), audios[0] if audios else None)
     m = _DURATION.search(stderr)
     dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else None
-    return Probe(video, pick[0] if pick else None, pick[2] if pick else None, dur)
+    tail = tuple(scrub(ln.strip()) for ln in stderr.splitlines() if ln.strip())[-6:]
+    return Probe(video, pick[0] if pick else None, pick[2] if pick else None, dur, tail)
 
 
 def build_command(
@@ -81,6 +85,7 @@ def build_command(
     audio_codec: str | None = None,
     use_nice: bool = True,
     transcode: bool = False,
+    fmp4: bool = False,
 ) -> list[str]:
     """ffmpeg argv: copy video (or re-encode to H.264 if transcode), AAC audio, HLS into out_dir."""
     cmd: list[str] = []
@@ -105,6 +110,8 @@ def build_command(
         ]  # fmt: skip
     else:
         cmd += ["-c:v", "copy"]
+        if fmp4:
+            cmd += ["-tag:v", "hvc1"]  # Apple/Chrome only accept HEVC in fMP4 with the hvc1 tag
     if audio_codec == "aac":
         cmd += ["-c:a", "copy"]
     else:
@@ -112,9 +119,10 @@ def build_command(
     cmd += [
         "-f", "hls", "-hls_time", "4", "-hls_list_size", "10" if live else str(VOD_WINDOW),
         "-hls_flags", "delete_segments+independent_segments",
-        "-hls_segment_filename", str(out_dir / "seg%d.ts"),
-        str(out_dir / "index.m3u8"),
     ]  # fmt: skip
+    if fmp4:
+        cmd += ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"]
+    cmd += ["-hls_segment_filename", str(out_dir / ("seg%d.m4s" if fmp4 else "seg%d.ts")), str(out_dir / "index.m3u8")]
     return cmd
 
 
@@ -133,6 +141,7 @@ class Session:
     requested: int = -1  # highest segment number a client has fetched
     paused: bool = False
     transcoding: bool = False
+    fmp4: bool = False
 
 
 def default_base_dir() -> Path:
@@ -185,7 +194,7 @@ class StreamManager:
 
     @staticmethod
     def _produced(s: Session) -> int:
-        nums = [int(m.group(1)) for f in s.dir.glob("seg*.ts") if (m := SEG_NUM.match(f.name))]
+        nums = [int(m.group(1)) for f in s.dir.glob("seg*") if (m := SEG_NUM.match(f.name))]
         return max(nums) if nums else -1
 
     def _flow_control(self, s: Session) -> None:
@@ -237,20 +246,28 @@ class StreamManager:
             while len(self.sessions) >= self.max_streams:
                 await self.stop(min(self.sessions.values(), key=lambda s: s.started).id)
 
-    async def start(self, source: str, *, live: bool, start: float = 0.0) -> Session:
+    async def start(
+        self, source: str, *, live: bool, start: float = 0.0, hevc_ok: bool = False
+    ) -> Session:
         _check_source(source)
         audio_index = audio_codec = duration = None
-        transcode = False
+        transcode = fmp4 = False
         if not live:
             p = await self.probe(source)
             if p.video_codec is None:
+                _LOGGER.warning("Probe found no video stream: %s", " | ".join(p.tail))
+                if any(re.search(r"Invalid data|[Ee]rror|Server returned|refused|timed out", t) for t in p.tail):
+                    raise StreamError("stream_failed:probe")  # the source answered badly, not a codec issue
                 raise StreamError("video_codec_unsupported")
-            transcode = p.video_codec != "h264"  # HEVC, VC-1, MPEG-4 ... browsers cannot play these
-            if transcode and not self.transcode:
-                raise StreamError("transcode_disabled")
+            if p.video_codec == "hevc" and hevc_ok:
+                fmp4 = True  # the player decodes HEVC itself: copy it, no CPU
+            elif p.video_codec != "h264":  # HEVC for old players, VC-1, MPEG-4 ... browsers cannot play these
+                transcode = True
+                if not self.transcode:
+                    raise StreamError("transcode_disabled")
             audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
         for attempt in range(RETRIES + 1):
-            s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode)
+            s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode, fmp4)
             try:
                 await self._wait_ready(s)
                 return s
@@ -265,7 +282,7 @@ class StreamManager:
         raise StreamError("portal_busy")  # pragma: no cover
 
     async def _spawn(
-        self, source, live, start, audio_index, audio_codec, duration, transcode=False
+        self, source, live, start, audio_index, audio_codec, duration, transcode=False, fmp4=False
     ) -> Session:
         async with self._lock:
             while len(self.sessions) >= self.max_streams:
@@ -277,7 +294,7 @@ class StreamManager:
             cmd = build_command(
                 self.ffmpeg, source, out, live=live, start=start,
                 audio_index=audio_index, audio_codec=audio_codec, use_nice=self.use_nice,
-                transcode=transcode,
+                transcode=transcode, fmp4=fmp4,
             )  # fmt: skip
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -286,7 +303,7 @@ class StreamManager:
             except OSError:
                 shutil.rmtree(out, ignore_errors=True)
                 raise StreamError("ffmpeg_missing") from None
-            s = Session(sid, out, proc, live, duration=duration, start_offset=start, transcoding=transcode)
+            s = Session(sid, out, proc, live, duration=duration, start_offset=start, transcoding=transcode, fmp4=fmp4)
             s.reader = asyncio.create_task(self._read_stderr(s))
             self.sessions[sid] = s
             return s

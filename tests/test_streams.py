@@ -107,6 +107,37 @@ async def test_transcoding_can_be_switched_off(mgr, server):
     assert not s.transcoding
 
 
+async def test_hevc_is_copied_as_fmp4_when_the_player_can_decode_it(mgr, server, ffmpeg):
+    s = await mgr.start(f"{server}/hevc.mkv", live=False, hevc_ok=True)
+    assert s.fmp4 and not s.transcoding
+    idx = mgr.file_for(s.id, "index.m3u8").read_text()
+    assert "#EXT-X-MAP" in idx and "init.mp4" in idx and ".m4s" in idx
+    init = mgr.file_for(s.id, "init.mp4")
+    assert init and mgr.file_for(s.id, next(f.name for f in s.dir.glob("seg*.m4s")))
+    info = ffinfo(ffmpeg, init)
+    assert "Video: hevc" in info and "hvc1" in info
+
+
+async def test_hevc_flag_is_ignored_for_other_codecs(mgr, server):
+    s = await mgr.start(f"{server}/movie.mkv", live=False, hevc_ok=True)
+    assert not s.fmp4 and not s.transcoding
+
+
+async def test_probe_failure_text_is_not_reported_as_a_codec_problem(mgr, monkeypatch):
+    async def probe(source):
+        return streams.Probe(None, None, None, None, ("Invalid data found when processing input",))
+
+    monkeypatch.setattr(mgr, "probe", probe)
+    with pytest.raises(StreamError, match="stream_failed"):
+        await mgr.start("http://127.0.0.1:9/x.mkv", live=False)
+
+
+def test_fmp4_command_uses_hvc1_tag_and_init_segment(tmp_path):
+    cmd = build_command("ffmpeg", "http://x/y", tmp_path, live=False, fmp4=True, use_nice=False)
+    assert cmd[cmd.index("-c:v") + 1] == "copy" and cmd[cmd.index("-tag:v") + 1] == "hvc1"
+    assert cmd[cmd.index("-hls_segment_type") + 1] == "fmp4" and str(tmp_path / "seg%d.m4s") in cmd
+
+
 async def test_h264_is_never_reencoded(mgr, server):
     s = await mgr.start(f"{server}/movie.mkv", live=False)
     assert not s.transcoding
@@ -144,7 +175,7 @@ async def test_idle_session_is_reaped_and_cleaned(mgr, server, monkeypatch):
     assert not mgr.sessions and not s.dir.exists()
 
 
-@pytest.mark.parametrize("name", ["../index.m3u8", "index.m3u8/../x", "seg1.ts.bak", "x.txt",
+@pytest.mark.parametrize("name", ["init.mp4/../x", "init.mp4.bak", "seg1.m4s.bak", "../init.mp4", "index.m3u8/../x", "seg1.ts.bak", "x.txt",
                                   "/etc/passwd", "seg../a", "../secret.txt"])  # fmt: skip
 async def test_file_for_rejects_unsafe_names(mgr, server, name):
     s = await mgr.start(f"{server}/live.ts", live=True)

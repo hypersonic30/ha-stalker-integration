@@ -168,6 +168,21 @@ async def test_play_hevc_is_transcoded_and_reported(hass, entry, hass_client):
     assert j["transcoding"] is False
 
 
+async def test_play_hevc_is_copied_for_capable_players_and_served_as_fmp4(hass, entry, hass_client, hass_client_no_auth):
+    c = await hass_client()
+    j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m2", "hevc": True})).json()
+    assert j["hevc"] is True and j["transcoding"] is False
+    anon = await hass_client_no_auth()
+    base = j["url"].rsplit("/", 1)[0]
+    init = await anon.get(base + "/init.mp4")
+    assert init.status == 200 and init.content_type == "video/mp4"
+    pl = await (await anon.get(j["url"])).text()
+    seg = next(line for line in pl.splitlines() if line.endswith(".m4s"))
+    assert (await anon.get(base + "/" + seg)).content_type == "video/iso.segment"
+    j2 = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m2", "hevc": "yes"})).json()
+    assert j2["hevc"] is False and j2["transcoding"] is True  # only a real true counts
+
+
 async def test_play_hevc_is_refused_when_transcoding_is_off(hass, entry, hass_client):
     hass.data[DOMAIN]["streams"].transcode = False
     c = await hass_client()

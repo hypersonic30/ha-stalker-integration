@@ -22,7 +22,10 @@ GUIDE_MAX_CHANNELS = 60
 GUIDE_MAX_SPAN = 36 * 3600
 MAX_DURATION = 24 * 3600
 HLS_PREFIX = "/api/stalker/hls"
-CONTENT_TYPES = {".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t"}
+CONTENT_TYPES = {
+    ".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t",
+    ".m4s": "video/iso.segment", ".mp4": "video/mp4",
+}
 
 
 def _err(code: str, status: int) -> web.Response:
@@ -269,6 +272,7 @@ class PlayView(_Base):
             body: dict[str, Any] = await request.json()
             kind, item_id = str(body["kind"]), str(body["id"])
             start = max(0.0, float(body.get("start", 0)))
+            hevc_ok = body.get("hevc") is True  # the player can decode HEVC itself
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
         if kind not in ("live", "vod", "episode"):
@@ -278,14 +282,14 @@ class PlayView(_Base):
             await streams.make_room()  # old stream must be gone before the portal sees a new one
             source = await data.source_for(kind, item_id)
             try:
-                s = await streams.start(source, live=kind == "live", start=start)
+                s = await streams.start(source, live=kind == "live", start=start, hevc_ok=hevc_ok)
             except StreamError as err:
                 code, _, detail = str(err).partition(":")
                 _LOGGER.warning("Stream failed: %s %s", code, detail)
                 raise _PlayFailed(code) from None
             return {
                 "session": s.id, "live": s.live, "duration": s.duration, "start": s.start_offset,
-                "transcoding": s.transcoding,
+                "transcoding": s.transcoding, "hevc": s.fmp4,
                 "url": f"{HLS_PREFIX}/{s.id}/index.m3u8",
             }  # fmt: skip
 
