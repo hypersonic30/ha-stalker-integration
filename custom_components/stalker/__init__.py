@@ -11,8 +11,10 @@ from .const import (
     CONF_MAX_STREAMS,
     CONF_PORTAL_URL,
     CONF_SERIES_M3U,
+    CONF_TRANSCODE,
     CONF_VOD_M3U,
     DEFAULT_MAX_STREAMS,
+    DEFAULT_TRANSCODE,
     DOMAIN,
 )
 from .data import StalkerData
@@ -29,6 +31,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     streams = StreamManager(
         get_ffmpeg_manager(hass).binary,
         max_streams=entry.data.get(CONF_MAX_STREAMS, DEFAULT_MAX_STREAMS),
+        transcode=entry.data.get(CONF_TRANSCODE, DEFAULT_TRANSCODE),
     )
     await streams.start_reaper()
     progress = Progress(hass)

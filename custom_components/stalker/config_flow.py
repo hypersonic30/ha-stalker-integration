@@ -9,6 +9,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -22,8 +23,10 @@ from .const import (
     CONF_MAX_STREAMS,
     CONF_PORTAL_URL,
     CONF_SERIES_M3U,
+    CONF_TRANSCODE,
     CONF_VOD_M3U,
     DEFAULT_MAX_STREAMS,
+    DEFAULT_TRANSCODE,
     DOMAIN,
 )
 from .stalker import MAC_RE, StalkerAuthError, StalkerClient, StalkerError
@@ -43,6 +46,7 @@ def _schema(d: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_MAX_STREAMS, default=d.get(CONF_MAX_STREAMS, DEFAULT_MAX_STREAMS)): NumberSelector(
                 NumberSelectorConfig(min=1, max=MAX_STREAMS_LIMIT, step=1, mode=NumberSelectorMode.BOX)
             ),
+            vol.Required(CONF_TRANSCODE, default=d.get(CONF_TRANSCODE, DEFAULT_TRANSCODE)): BooleanSelector(),
         }
     )
 
@@ -51,6 +55,7 @@ def _clean(user_input: dict[str, Any]) -> dict[str, Any]:
     out = dict(user_input)
     out[CONF_MAC] = out[CONF_MAC].strip().upper()
     out[CONF_MAX_STREAMS] = int(out[CONF_MAX_STREAMS])
+    out[CONF_TRANSCODE] = bool(out.get(CONF_TRANSCODE, DEFAULT_TRANSCODE))
     for key in (CONF_PORTAL_URL, CONF_VOD_M3U, CONF_SERIES_M3U):
         out[key] = (out.get(key) or "").strip()
     return out

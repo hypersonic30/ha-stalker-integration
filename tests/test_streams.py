@@ -98,6 +98,15 @@ async def test_hevc_is_reencoded_to_h264_capped_at_720p(mgr, server, ffmpeg):
     assert "Video: h264" in info and "Video: hevc" not in info and "Audio: aac" in info
 
 
+async def test_transcoding_can_be_switched_off(mgr, server):
+    mgr.transcode = False
+    with pytest.raises(StreamError, match="transcode_disabled"):
+        await mgr.start(f"{server}/hevc.mkv", live=False)
+    assert not mgr.sessions and not list(mgr.base_dir.iterdir())
+    s = await mgr.start(f"{server}/movie.mkv", live=False)  # h264 still plays
+    assert not s.transcoding
+
+
 async def test_h264_is_never_reencoded(mgr, server):
     s = await mgr.start(f"{server}/movie.mkv", live=False)
     assert not s.transcoding

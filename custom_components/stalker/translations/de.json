@@ -9,14 +9,16 @@
           "mac": "MAC-Adresse",
           "vod_m3u": "Filme (M3U-Adresse, optional)",
           "series_m3u": "Serien (M3U-Adresse, optional)",
-          "max_streams": "Gleichzeitige Streams"
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
         },
         "data_description": {
           "portal_url": "z. B. portal.home/c/",
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
-          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten."
+          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den Browser nicht abspielen (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
         }
       },
       "reconfigure": {
@@ -27,14 +29,16 @@
           "mac": "MAC-Adresse",
           "vod_m3u": "Filme (M3U-Adresse, optional)",
           "series_m3u": "Serien (M3U-Adresse, optional)",
-          "max_streams": "Gleichzeitige Streams"
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
         },
         "data_description": {
           "portal_url": "z. B. portal.home/c/",
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
-          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten."
+          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den Browser nicht abspielen (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
         }
       }
     },

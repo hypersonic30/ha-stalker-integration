@@ -9,14 +9,16 @@
           "mac": "MAC address",
           "vod_m3u": "Movies (M3U URL, optional)",
           "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams"
+          "max_streams": "Simultaneous streams",
+          "transcode": "Re-encode unplayable video"
         },
         "data_description": {
           "portal_url": "e.g. portal.home/c/",
           "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
           "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one."
+          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one.",
+          "transcode": "Movies with a codec browsers cannot play (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
         }
       },
       "reconfigure": {
@@ -27,14 +29,16 @@
           "mac": "MAC address",
           "vod_m3u": "Movies (M3U URL, optional)",
           "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams"
+          "max_streams": "Simultaneous streams",
+          "transcode": "Re-encode unplayable video"
         },
         "data_description": {
           "portal_url": "e.g. portal.home/c/",
           "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
           "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one."
+          "max_streams": "Most portals allow only one stream per MAC. A new stream ends the old one.",
+          "transcode": "Movies with a codec browsers cannot play (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
         }
       }
     },

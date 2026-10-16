@@ -142,7 +142,9 @@ def default_base_dir() -> Path:
 
 
 class StreamManager:
-    def __init__(self, ffmpeg: str, base_dir: Path | None = None, max_streams: int = 1) -> None:
+    def __init__(self, ffmpeg: str, base_dir: Path | None = None, max_streams: int = 1, transcode: bool = True
+    ) -> None:
+        self.transcode = transcode  # allow re-encoding unplayable video (CPU heavy)
         self.ffmpeg = ffmpeg
         self.base_dir = base_dir or default_base_dir()
         self.max_streams = max(1, min(MAX_STREAMS_LIMIT, max_streams))
@@ -244,6 +246,8 @@ class StreamManager:
             if p.video_codec is None:
                 raise StreamError("video_codec_unsupported")
             transcode = p.video_codec != "h264"  # HEVC, VC-1, MPEG-4 ... browsers cannot play these
+            if transcode and not self.transcode:
+                raise StreamError("transcode_disabled")
             audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
         for attempt in range(RETRIES + 1):
             s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode)

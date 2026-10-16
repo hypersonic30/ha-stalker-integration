@@ -72,8 +72,26 @@ async def test_config_flow_validates_with_real_handshake(hass, portal):
             "portal_url": portal.base, "mac": "nonsense", "vod_m3u": "", "series_m3u": "", "max_streams": 1})  # fmt: skip
         assert junk["errors"] == {"base": "invalid_mac"}
         ok = await hass.config_entries.flow.async_configure(r["flow_id"], {
-            "portal_url": portal.base + "/c/", "mac": MAC.lower(), "vod_m3u": "", "series_m3u": "", "max_streams": 2})  # fmt: skip
+            "portal_url": portal.base + "/c/", "mac": MAC.lower(), "vod_m3u": "", "series_m3u": "", "max_streams": 2, "transcode": False})  # fmt: skip
     assert ok["type"] == "create_entry" and ok["data"]["mac"] == MAC and ok["data"]["max_streams"] == 2
+    assert ok["data"]["transcode"] is False
+
+
+async def test_transcode_option_is_on_by_default_and_reaches_the_stream_manager(hass, entry):
+    assert hass.data[DOMAIN]["streams"].transcode is True
+
+
+async def test_transcode_option_off_in_entry_is_applied(hass, portal, ffmpeg):
+    e = MockConfigEntry(domain=DOMAIN, data={"portal_url": portal.base + "/c/", "mac": MAC, "vod_m3u": "",
+                                              "series_m3u": "", "max_streams": 1, "transcode": False})  # fmt: skip
+    e.add_to_hass(hass)
+    with patch("homeassistant.components.ffmpeg.async_setup", return_value=True), patch(
+        "custom_components.stalker.get_ffmpeg_manager", return_value=MagicMock(binary=ffmpeg)
+    ):
+        assert await hass.config_entries.async_setup(e.entry_id)
+        await hass.async_block_till_done()
+        assert hass.data[DOMAIN]["streams"].transcode is False
+        await hass.config_entries.async_unload(e.entry_id)
 
 
 async def test_requires_login(hass, entry, hass_client_no_auth):
@@ -148,6 +166,13 @@ async def test_play_hevc_is_transcoded_and_reported(hass, entry, hass_client):
     assert j["transcoding"] is True
     j = await (await c.post("/api/stalker/play", json={"kind": "vod", "id": "m1"})).json()
     assert j["transcoding"] is False
+
+
+async def test_play_hevc_is_refused_when_transcoding_is_off(hass, entry, hass_client):
+    hass.data[DOMAIN]["streams"].transcode = False
+    c = await hass_client()
+    r = await c.post("/api/stalker/play", json={"kind": "vod", "id": "m2"})
+    assert r.status == 502 and (await r.json())["code"] == "transcode_disabled"
 
 
 async def test_play_refuses_bad_input_and_foreign_hosts(hass, entry, hass_client):

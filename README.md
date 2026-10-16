@@ -10,6 +10,7 @@ Gespielt wird in der [Stalker Card](https://github.com/hypersonic30/ha-stalker-c
 - Die Streams laufen **durch Home Assistant**: ffmpeg packt sie zu HLS um. **Video wird kopiert**, nur Audio wird zu AAC (Browser und Apps spielen kein DTS/AC3).
   Nur wenn ein Film einen Codec hat, den Browser nicht abspielen (z. B. HEVC), kodiert ffmpeg das Video nach H.264 um (höchstens 720p, `veryfast`).
   Das kostet deutlich mehr CPU (grob 1–2 Kerne); die Karte zeigt „umkodiert“ an. Live-TV wird nie umkodiert.
+  In den Einstellungen der Integration lässt sich das mit dem Schalter *Nicht abspielbares Video umkodieren* ausschalten; solche Filme werden dann mit einem Hinweis abgelehnt.
   So geht es auch unterwegs und ohne Mixed-Content-Probleme.
 - Die Card sieht nur IDs. MAC-Adresse und Portal-Links bleiben in Home Assistant.
 
