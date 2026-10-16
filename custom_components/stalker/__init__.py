@@ -7,27 +7,21 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    CONF_MAC,
     CONF_MAX_STREAMS,
-    CONF_PORTAL_URL,
-    CONF_SERIES_M3U,
     CONF_TRANSCODE,
-    CONF_VOD_M3U,
     DEFAULT_MAX_STREAMS,
     DEFAULT_TRANSCODE,
     DOMAIN,
 )
-from .data import StalkerData
 from .progress import Progress
-from .stalker import StalkerClient
+from .sources import build_data
 from .streams import StreamManager
 from .views import register_views
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = async_get_clientsession(hass)
-    client = StalkerClient(session, entry.data[CONF_PORTAL_URL], entry.data[CONF_MAC])
-    data = StalkerData(session, client, entry.data.get(CONF_VOD_M3U), entry.data.get(CONF_SERIES_M3U))
+    data = build_data(session, entry.data)
     streams = StreamManager(
         get_ffmpeg_manager(hass).binary,
         max_streams=entry.data.get(CONF_MAX_STREAMS, DEFAULT_MAX_STREAMS),

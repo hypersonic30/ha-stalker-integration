@@ -64,6 +64,8 @@ async def entry(hass, portal, ffmpeg):
 async def test_config_flow_validates_with_real_handshake(hass, portal):
     with patch("homeassistant.components.ffmpeg.async_setup", return_value=True):
         r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+        assert r["type"] == "menu" and r["menu_options"] == ["stalker", "m3u", "xtream"]
+        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "stalker"})
         bad = await hass.config_entries.flow.async_configure(r["flow_id"], {
             "portal_url": portal.base + "/c/", "mac": "00:1A:79:00:00:00", "vod_m3u": "",
             "series_m3u": "", "max_streams": 1})  # fmt: skip
@@ -259,7 +261,7 @@ async def test_epg_view_uses_the_guide_and_survives_a_broken_portal_guide(hass, 
         from custom_components.stalker.stalker import StalkerError
         raise StalkerError("x")
 
-    data.client.epg_all = boom
+    data._live_src.client.epg_all = boom
     assert (await (await c.get("/api/stalker/nowplaying")).json()) == {"items": {}}  # no error
     assert (await c.get("/api/stalker/epg/10")).status == 200  # falls back to the short EPG
 

@@ -66,7 +66,7 @@ class InfoView(_Base):
 
     async def get(self, request: web.Request) -> web.Response:
         async def fn(data: StalkerData, streams: StreamManager):
-            return {"vod": data.has_vod, "series": data.has_series, "max_streams": streams.max_streams}
+            return {"vod": data.has_vod, "series": data.has_series, "epg": data.has_epg, "max_streams": streams.max_streams}
 
         return await self._run(fn)
 
@@ -97,7 +97,7 @@ class EpgView(_Base):
                 raise NotFound
             now = time.time()
             items = [p for p in (await data.guide()).get(channel_id, []) if p["stop"] > now][:3]
-            return {"items": items or await data.client.epg(channel_id)}
+            return {"items": items or await data.short_epg(channel_id)}
 
         return await self._run(fn)
 
@@ -188,8 +188,7 @@ class SeriesListView(_Base):
 
         async def fn(data: StalkerData, streams: StreamManager):
             return {"items": [
-                {"id": sid, "title": s.title, "logo": s.logo, "group": s.group,
-                 "episodes": sum(len(v) for v in s.seasons.values())}
+                {"id": sid, "title": s.title, "logo": s.logo, "group": s.group, "episodes": s.episodes}
                 for sid, s in (await data.series()).items() if not q or q in s.title.lower()
             ]}  # fmt: skip
 
@@ -202,11 +201,11 @@ class SeriesView(_Base):
 
     async def get(self, request: web.Request, sid: str) -> web.Response:
         async def fn(data: StalkerData, streams: StreamManager):
-            s = (await data.series()).get(sid)
+            s = await data.series_detail(sid)
             if not s:
                 raise NotFound
             return {
-                "id": sid, "title": s.title, "logo": s.logo,
+                "id": sid, "title": s.title, "logo": s.logo or (await data.series())[sid].logo,
                 "seasons": [
                     {"season": n, "episodes": [
                         {"id": e.stream_id, "episode": e.episode, "title": e.title} for e in eps]}
@@ -230,7 +229,10 @@ class ProgressView(_Base):
 
         async def fn(data: StalkerData, streams: StreamManager):
             entries = self.hass.data[DOMAIN]["progress"].entries(user)
-            series = await data.series() if data.has_series else {}
+            series = {}
+            for sid in {e.get("sid") for e in entries.values() if e.get("sid")}:
+                if s := await data.series_detail(sid):
+                    series[sid] = s
             return {
                 "items": {k: {f: e.get(f) for f in ("pos", "dur", "done", "t")} for k, e in entries.items()},
                 "resume": resume_list(entries, series),
@@ -245,6 +247,7 @@ class ProgressView(_Base):
             kind, item_id = str(body["kind"]), str(body["id"])
             done = body.get("done")
             pos, dur = float(body.get("pos", 0)), float(body.get("dur", 0))
+            sid = str(body["sid"]) if body.get("sid") is not None else None
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
         if kind not in KINDS or (done is not None and not isinstance(done, bool)) or dur != dur or pos != pos:
@@ -253,7 +256,7 @@ class ProgressView(_Base):
 
         async def fn(data: StalkerData, streams: StreamManager):
             progress: Progress = self.hass.data[DOMAIN]["progress"]
-            meta = await data.describe(kind, item_id)
+            meta = await data.describe(kind, item_id, sid)
             if done is None:
                 progress.save(user, kind, item_id, pos, min(dur, MAX_DURATION), meta)
             else:
@@ -273,6 +276,7 @@ class PlayView(_Base):
             kind, item_id = str(body["kind"]), str(body["id"])
             start = max(0.0, float(body.get("start", 0)))
             hevc_ok = body.get("hevc") is True  # the player can decode HEVC itself
+            sid = str(body["sid"]) if body.get("sid") is not None else None
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
         if kind not in ("live", "vod", "episode"):
@@ -280,7 +284,7 @@ class PlayView(_Base):
 
         async def fn(data: StalkerData, streams: StreamManager):
             await streams.make_room()  # old stream must be gone before the portal sees a new one
-            source = await data.source_for(kind, item_id)
+            source = await data.source_for(kind, item_id, sid)
             try:
                 s = await streams.start(source, live=kind == "live", start=start, hevc_ok=hevc_ok)
             except StreamError as err:

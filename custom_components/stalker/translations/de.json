@@ -1,8 +1,8 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Mit Stalker-Portal verbinden",
+      "stalker": {
+        "title": "Mit einem Stalker-Portal verbinden",
         "description": "Die MAC-Adresse bleibt in Home Assistant; die Karte sieht sie nie.",
         "data": {
           "portal_url": "Portal-Adresse",
@@ -17,12 +17,12 @@
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
-          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten.",
-          "transcode": "Filme mit einem Codec, den Browser nicht abspielen (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
         }
       },
-      "reconfigure": {
-        "title": "Stalker-Portal ändern",
+      "reconfigure_stalker": {
+        "title": "Verbindung ändern",
         "description": "Die MAC-Adresse bleibt in Home Assistant; die Karte sieht sie nie.",
         "data": {
           "portal_url": "Portal-Adresse",
@@ -37,19 +37,105 @@
           "mac": "MAC-Adresse deines Abos, z. B. 00:1A:79:XX:XX:XX",
           "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
           "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
-          "max_streams": "Die meisten Portale erlauben nur einen Stream je MAC. Ein neuer Stream beendet den alten.",
-          "transcode": "Filme mit einem Codec, den Browser nicht abspielen (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+        }
+      },
+      "m3u": {
+        "title": "M3U-Liste verbinden",
+        "description": "Einfache Listen, z. B. vom Anbieter oder von einem Tuner.",
+        "data": {
+          "live_m3u": "Live-TV (M3U-Adresse)",
+          "xmltv": "Programmführer (XMLTV-Adresse, optional)",
+          "vod_m3u": "Filme (M3U-Adresse, optional)",
+          "series_m3u": "Serien (M3U-Adresse, optional)",
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
+        },
+        "data_description": {
+          "live_m3u": "M3U-Liste mit den TV-Sendern.",
+          "xmltv": "XMLTV-Datei (auch .gz). Sender werden über die tvg-id, sonst über den Namen zugeordnet. Leer lassen für kein Programm.",
+          "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
+          "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+        }
+      },
+      "reconfigure_m3u": {
+        "title": "Verbindung ändern",
+        "description": "Einfache Listen, z. B. vom Anbieter oder von einem Tuner.",
+        "data": {
+          "live_m3u": "Live-TV (M3U-Adresse)",
+          "xmltv": "Programmführer (XMLTV-Adresse, optional)",
+          "vod_m3u": "Filme (M3U-Adresse, optional)",
+          "series_m3u": "Serien (M3U-Adresse, optional)",
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
+        },
+        "data_description": {
+          "live_m3u": "M3U-Liste mit den TV-Sendern.",
+          "xmltv": "XMLTV-Datei (auch .gz). Sender werden über die tvg-id, sonst über den Namen zugeordnet. Leer lassen für kein Programm.",
+          "vod_m3u": "M3U-Liste mit den Filmen. Leer lassen für keinen Filme-Bereich.",
+          "series_m3u": "M3U-Liste mit den Serien. Leer lassen für keinen Serien-Bereich.",
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+        }
+      },
+      "xtream": {
+        "title": "Xtream-Codes-Zugang verbinden",
+        "description": "Live-TV, Filme, Serien und Programm kommen vom Server.",
+        "data": {
+          "server_url": "Server-Adresse",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
+        },
+        "data_description": {
+          "server_url": "Adresse des Xtream-Codes-Servers mit Port, z. B. anbieter.example:8080",
+          "username": "Dein Xtream-Benutzername.",
+          "password": "Dein Xtream-Passwort. Es bleibt in Home Assistant.",
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+        }
+      },
+      "reconfigure_xtream": {
+        "title": "Verbindung ändern",
+        "description": "Live-TV, Filme, Serien und Programm kommen vom Server.",
+        "data": {
+          "server_url": "Server-Adresse",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "max_streams": "Gleichzeitige Streams",
+          "transcode": "Nicht abspielbares Video umkodieren"
+        },
+        "data_description": {
+          "server_url": "Adresse des Xtream-Codes-Servers mit Port, z. B. anbieter.example:8080",
+          "username": "Dein Xtream-Benutzername.",
+          "password": "Dein Xtream-Passwort. Es bleibt in Home Assistant.",
+          "max_streams": "Die meisten Anbieter erlauben nur einen Stream je Zugang. Ein neuer Stream beendet den alten.",
+          "transcode": "Filme mit einem Codec, den der Player nicht abspielt (z. B. HEVC), werden nach H.264 in 720p umgewandelt. Braucht viel CPU; ausschalten, um solche Filme abzulehnen."
+        }
+      },
+      "user": {
+        "title": "Quelle wählen",
+        "description": "Woher kommen deine Sender?",
+        "menu_options": {
+          "stalker": "Stalker-Portal (MAC-Adresse)",
+          "m3u": "M3U-Liste + XMLTV",
+          "xtream": "Xtream Codes"
         }
       }
     },
     "error": {
       "invalid_url": "Adresse muss mit http oder https beginnen.",
       "invalid_mac": "Ungültige MAC-Adresse.",
-      "auth": "Das Portal hat die MAC-Adresse abgelehnt.",
-      "cannot_connect": "Portal nicht erreichbar."
+      "auth": "Der Server hat die Anmeldung abgelehnt.",
+      "cannot_connect": "Der Server ist nicht erreichbar.",
+      "no_channels": "Die Liste enthält keine Sender."
     },
     "abort": {
-      "single_instance_allowed": "Nur ein Portal möglich.",
+      "single_instance_allowed": "Es wird nur eine Quelle unterstützt.",
       "reconfigure_successful": "Gespeichert."
     }
   }

@@ -28,6 +28,16 @@ class Episode:
 
 
 @dataclass
+class SeriesInfo:
+    """A series in a list (no episodes loaded yet)."""
+
+    title: str
+    logo: str
+    group: str
+    episodes: int = 0
+
+
+@dataclass
 class Series:
     title: str
     logo: str
