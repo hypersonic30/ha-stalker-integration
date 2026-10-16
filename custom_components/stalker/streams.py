@@ -26,13 +26,15 @@ RETRY_WAIT = 8.0  # the portal says "Retry in 8s" when it has no free MAC
 RETRIES = 2
 # ffmpeg prints codes it does not know (461, 429, 503 ...) only as "4XX"/"5XX" Client/Server Error
 RETRY_RE = re.compile(r"HTTP error (503|461|429)|Server returned (4XX|5XX|5\d\d|461|429)")
-SEG_NUM = re.compile(r"^seg(\d+)\.(?:ts|m4s)$")
+SEG_NUM = re.compile(r"^seg(?:_v_)?(\d+)\.(?:ts|m4s)$")  # the video segments count when audio has its own
 MAX_RUNTIME = 8 * 3600  # absolute cap for a single ffmpeg process
 READY_TIMEOUT = 25.0
 PROBE_TIMEOUT = 25.0
 TRANSCODE_HEIGHT = 720  # re-encoded video is scaled down to this height (CPU)
 PREFERRED_LANGS = ("ger", "deu", "de")
-SAFE_NAME = re.compile(r"^(index\.m3u8|init\.mp4|seg\d{1,7}\.(?:ts|m4s)|sub\d{1,3}\.vtt)$")
+_VAR = r"(?:v|a\d{1,2})"  # video / audio variants of a stream with several audio tracks
+SAFE_NAME = re.compile(rf"^(index\.m3u8|init\.mp4|seg\d{{1,7}}\.(?:ts|m4s)|sub\d{{1,3}}\.vtt|{_VAR}\.m3u8|init_{_VAR}\.mp4|seg_{_VAR}_\d{{1,7}}\.(?:ts|m4s))$")
+MAX_AUDIO = 8  # tracks written as alternative audio renditions
 TEXT_SUBS = {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}  # picture subtitles (PGS, DVD) cannot be shown
 PROBE_KEEP = 16
 PROBE_TTL = 3600.0
@@ -102,6 +104,7 @@ def build_command(
     transcode: bool = False,
     fmp4: bool = False,
     subs: tuple[int, ...] = (),
+    audios: tuple[tuple[int, str], ...] = (),  # (stream index, language): all become renditions
 ) -> list[str]:
     """ffmpeg argv: copy video (or re-encode to H.264 if transcode), AAC audio, HLS into out_dir."""
     cmd: list[str] = []
@@ -117,7 +120,12 @@ def build_command(
     if not live and start > 0:
         cmd += ["-ss", f"{start:.3f}"]  # read-and-discard up to this point
     cmd += ["-i", source, "-map", "0:v:0"]
-    cmd += ["-map", f"0:{audio_index}" if audio_index is not None else "0:a:0?"]
+    multi = len(audios) > 1  # every track becomes a switchable audio rendition: no new stream to change it
+    if multi:
+        for idx, _lang in audios:
+            cmd += ["-map", f"0:{idx}"]
+    else:
+        cmd += ["-map", f"0:{audio_index}" if audio_index is not None else "0:a:0?"]
     cmd += ["-sn", "-dn"]
     if transcode:
         fps = "fps=25," if live else ""  # 50 fps live streams would double the CPU load
@@ -130,7 +138,9 @@ def build_command(
         cmd += ["-c:v", "copy"]
         if fmp4:
             cmd += ["-tag:v", "hvc1"]  # Apple/Chrome only accept HEVC in fMP4 with the hvc1 tag
-    if audio_codec == "aac":
+    if multi:
+        cmd += ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
+    elif audio_codec == "aac":
         cmd += ["-c:a", "copy"]
     else:
         cmd += ["-c:a", "aac", "-b:a", "160k", "-ac", "2"]
@@ -138,9 +148,18 @@ def build_command(
         "-f", "hls", "-hls_time", "4", "-hls_list_size", "10" if live else str(VOD_WINDOW),
         "-hls_flags", "delete_segments+independent_segments",
     ]  # fmt: skip
+    ext = "m4s" if fmp4 else "ts"
     if fmp4:
-        cmd += ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"]
-    cmd += ["-hls_segment_filename", str(out_dir / ("seg%d.m4s" if fmp4 else "seg%d.ts")), str(out_dir / "index.m3u8")]
+        cmd += ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init_%v.mp4" if multi else "init.mp4"]
+    if multi:
+        vmap = ["v:0,agroup:aud,name:v"]
+        for n, (idx, lang) in enumerate(audios):
+            lang = lang if re.fullmatch(r"[a-z]{2,3}", lang) else ""
+            vmap.append(f"a:{n},agroup:aud,name:a{n}" + (f",language:{lang}" if lang else "") + (",default:yes" if idx == audio_index else ""))
+        cmd += ["-master_pl_name", "index.m3u8", "-var_stream_map", " ".join(vmap),
+                "-hls_segment_filename", str(out_dir / f"seg_%v_%d.{ext}"), str(out_dir / "%v.m3u8")]
+    else:
+        cmd += ["-hls_segment_filename", str(out_dir / f"seg%d.{ext}"), str(out_dir / "index.m3u8")]
     for i in subs:  # text subtitles grow as ffmpeg reads on; the card polls them
         cmd += ["-map", f"0:{i}", "-c:s", "webvtt", "-flush_packets", "1", "-f", "webvtt", str(out_dir / f"sub{i}.vtt")]
     return cmd
@@ -166,6 +185,7 @@ class Session:
     audios: tuple = ()  # (stream index, language, codec) of the source
     subs: tuple = ()  # text subtitles written next to the playlist as sub<N>.vtt
     audio_index: int | None = None
+    multi: bool = False  # index.m3u8 is a master playlist with one audio rendition per track
 
 
 def default_base_dir() -> Path:
@@ -307,14 +327,15 @@ class StreamManager:
                 if not self.transcode:
                     raise StreamError("transcode_disabled")
             audio_index, audio_codec, duration = p.audio_index, p.audio_codec, p.duration
-            audios, subs = p.audios, p.subs
+            audios, subs = p.audios[:MAX_AUDIO], p.subs
             chosen = next((a for a in audios if a[0] == audio), None)
             if chosen:  # the viewer picked a track
                 audio_index, audio_codec = chosen[0], chosen[2]
         for attempt in range(RETRIES + 1):
+            tracks = tuple((i, lang) for i, lang, _ in audios) if len(audios) > 1 else ()
             s = await self._spawn(source, live, start, audio_index, audio_codec, duration, transcode, fmp4,
-                                  tuple(i for i, _, _ in subs))  # fmt: skip
-            s.audios, s.subs, s.audio_index = audios, subs, audio_index
+                                  tuple(i for i, _, _ in subs), tracks)  # fmt: skip
+            s.audios, s.subs, s.audio_index, s.multi = audios, subs, audio_index, bool(tracks)
             try:
                 await self._wait_ready(s, check_codec=live and not transcode and not fmp4)
                 return s
@@ -345,7 +366,8 @@ class StreamManager:
         raise StreamError("portal_busy")  # pragma: no cover
 
     async def _spawn(
-        self, source, live, start, audio_index, audio_codec, duration, transcode=False, fmp4=False, subs=()
+        self, source, live, start, audio_index, audio_codec, duration, transcode=False, fmp4=False, subs=(),
+        audios=(),
     ) -> Session:
         async with self._lock:
             while len(self.sessions) >= self.max_streams:
@@ -357,7 +379,7 @@ class StreamManager:
             cmd = build_command(
                 self.ffmpeg, source, out, live=live, start=start,
                 audio_index=audio_index, audio_codec=audio_codec, use_nice=self.use_nice,
-                transcode=transcode, fmp4=fmp4, subs=subs,
+                transcode=transcode, fmp4=fmp4, subs=subs, audios=audios,
             )  # fmt: skip
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -380,12 +402,16 @@ class StreamManager:
             s.stderr = (s.stderr + [text])[-20:]
 
     async def _wait_ready(self, s: Session, check_codec: bool = False) -> None:
-        index = s.dir / "index.m3u8"
-        deadline = time.monotonic() + READY_TIMEOUT
+        index = s.dir / ("v.m3u8" if s.multi else "index.m3u8")
+        a0 = s.dir / "a0.m3u8" if s.multi else None
+        # A jump into a film reads and drops everything before it over the single portal connection.
+        deadline = time.monotonic() + READY_TIMEOUT + (0 if s.live else min(120.0, s.start_offset / 10))
         while time.monotonic() < deadline:
             if check_codec and s.video_codec and s.video_codec != "h264":
                 raise _WrongCodec(s.video_codec)
-            if index.exists() and "#EXTINF" in index.read_text(errors="replace"):
+            if index.exists() and "#EXTINF" in index.read_text(errors="replace") and (
+                a0 is None or (a0.exists() and "#EXTINF" in a0.read_text(errors="replace"))
+            ):
                 return
             if s.proc.returncode is not None:
                 await asyncio.sleep(0.1)  # let the stderr reader catch up before reporting

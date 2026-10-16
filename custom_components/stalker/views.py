@@ -376,6 +376,7 @@ class PlayView(_Base):
                 "transcoding": s.transcoding, "hevc": s.fmp4,
                 "audio": [{"index": i, "lang": lang, "codec": codec} for i, lang, codec in s.audios],
                 "audio_index": s.audio_index,
+                "multi_audio": s.multi,
                 "subs": [{"index": i, "lang": lang} for i, lang, _ in s.subs],
                 "url": f"{HLS_PREFIX}/{s.id}/index.m3u8",
             }  # fmt: skip

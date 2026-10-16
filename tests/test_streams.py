@@ -78,8 +78,9 @@ async def test_live_start_serves_playlist_and_segments(mgr, server):
 async def test_vod_transcodes_audio_to_aac_and_keeps_video(mgr, server, ffmpeg):
     s = await mgr.start(f"{server}/movie.mkv", live=False)
     assert s.duration and 11 < s.duration < 13
-    info = ffinfo(ffmpeg, next(s.dir.glob("seg*.ts")))
-    assert "Video: h264" in info and "Audio: aac" in info and "ac3" not in info
+    assert "Video: h264" in ffinfo(ffmpeg, next(s.dir.glob("seg_v_*.ts")))
+    info = ffinfo(ffmpeg, next(s.dir.glob("seg_a0_*.ts")))
+    assert "Audio: aac" in info and "ac3" not in info
 
 
 async def test_vod_picks_german_track(mgr, server, monkeypatch):
@@ -334,7 +335,7 @@ async def test_short_source_that_finishes_instantly_stays_playable(mgr, server):
     await asyncio.sleep(1.0)
     await mgr.reap()
     assert s.id in mgr.sessions and s.proc.returncode == 0
-    assert "#EXT-X-ENDLIST" in mgr.file_for(s.id, "index.m3u8").read_text()
+    assert "#EXT-X-ENDLIST" in mgr.file_for(s.id, "v.m3u8").read_text()
 
 
 async def test_crashed_ffmpeg_is_reaped(mgr, server):
@@ -441,3 +442,29 @@ async def test_probe_is_cached_for_track_changes(mgr, server, monkeypatch):
     await mgr.probe(f"{server}/subs.mkv")
     await mgr.probe(f"{server}/subs.mkv")
     assert len(calls) == 1
+
+
+async def test_every_audio_track_is_a_switchable_rendition(mgr, server, ffmpeg):
+    s = await mgr.start(f"{server}/subs.mkv", live=False)
+    assert s.multi
+    master = mgr.file_for(s.id, "index.m3u8").read_text()
+    assert master.count("#EXT-X-MEDIA:TYPE=AUDIO") == 2 and 'LANGUAGE="ger"' in master and 'LANGUAGE="eng"' in master
+    assert 'NAME="audio_1",DEFAULT=YES' in master  # ger is the default pick
+    for name in ("v.m3u8", "a0.m3u8", "a1.m3u8"):
+        assert "#EXTINF" in mgr.file_for(s.id, name).read_text()
+    assert mgr.file_for(s.id, "seg_a1_0.ts") and mgr.file_for(s.id, "seg_v_0.ts")
+    assert mgr._produced(s) >= 0  # flow control counts the video segments
+    assert "Video: h264" in ffinfo(ffmpeg, mgr.file_for(s.id, "seg_v_0.ts"))
+    assert "Audio: aac" in ffinfo(ffmpeg, mgr.file_for(s.id, "seg_a1_0.ts"))
+
+
+async def test_the_picked_track_is_the_default_rendition(mgr, server):
+    p = await mgr.probe(f"{server}/subs.mkv")
+    s = await mgr.start(f"{server}/subs.mkv", live=False, audio=p.audios[1][0])
+    master = mgr.file_for(s.id, "index.m3u8").read_text()
+    assert 'NAME="audio_2",DEFAULT=YES' in master and 'NAME="audio_1",DEFAULT=NO' in master
+
+
+async def test_single_audio_keeps_the_plain_playlist(mgr, server):
+    s = await mgr.start(f"{server}/live.ts", live=True)
+    assert not s.multi and "#EXTINF" in mgr.file_for(s.id, "index.m3u8").read_text()

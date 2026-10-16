@@ -52,7 +52,7 @@ HACS → Benutzerdefiniertes Repository → Integration, dann *Einstellungen →
 zuerst die gemeinsamen Einstellungen, danach **Portal hinzufügen** (Stalker: Portal-Adresse, MAC, optional M3U-Adressen für Filme und Serien).
 
 ## Bekannte Grenzen
-- Tonspur und Text-Untertitel (SRT/ASS) sind in der Karte wählbar (Knöpfe im Film-Player; Standard bei Mehrfach-Ton: Deutsch). Ein Tonwechsel startet den Stream neu (5–20 s). Bild-Untertitel (PGS, DVD) gehen nicht, dafür müsste das Video umkodiert werden.
+- Tonspur und Text-Untertitel (SRT/ASS) sind in der Karte wählbar (Knöpfe im Film-Player; Standard bei Mehrfach-Ton: Deutsch). Alle Tonspuren laufen als umschaltbare Varianten im selben Stream mit (der Wechsel dauert unter einer Sekunde und braucht das Portal nicht); Spulen innerhalb der letzten ~4 Minuten bzw. des schon vorgeladenen Teils startet ebenfalls nichts neu. Ein Sprung weiter weg öffnet eine neue Verbindung: das Portal liefert dabei den Film ab Anfang bis zur Zielstelle (5–20 s, bei einer Stunde Vorsprung über eine Minute). Die Untertitel lassen sich um ±0,5 s verschieben. Bild-Untertitel (PGS, DVD) gehen nicht, dafür müsste das Video umkodiert werden.
 - Umkodierte Filme (HEVC) brauchen auf schwacher Hardware evtl. zu viel CPU und ruckeln; Spulen im Film startet den Stream neu (je nach Portal 5–20 s).
 - Logos und Poster lädt die Card direkt vom Portal (im LAN ok).
 
