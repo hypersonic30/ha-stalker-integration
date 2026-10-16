@@ -32,9 +32,14 @@ def _err(code: str, status: int) -> web.Response:
     return web.json_response({"code": code}, status=status)
 
 
-def _state(hass: HomeAssistant) -> tuple[StalkerData, StreamManager] | None:
+def _state(hass: HomeAssistant, portal: str | None) -> tuple[StalkerData, StreamManager] | None:
+    """Data of the asked portal (none given: the first one) and the shared stream manager."""
     d = hass.data.get(DOMAIN)
-    return (d["data"], d["streams"]) if d else None
+    if not d or "portals" not in d:
+        return None
+    portals = d["portals"]
+    p = portals.get(portal) if portal else next(iter(portals.values()), None)
+    return (p.data, d["streams"]) if p else None
 
 
 class _Base(HomeAssistantView):
@@ -43,9 +48,11 @@ class _Base(HomeAssistantView):
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
-    async def _run(self, fn):
-        st = _state(self.hass)
+    async def _run(self, fn, portal: str | None = None):
+        st = _state(self.hass, portal)
         if st is None:
+            if (self.hass.data.get(DOMAIN) or {}).get("portals") is not None:
+                return _err("portal_not_found", 404)
             return _err("not_loaded", 503)
         try:
             return web.json_response(await fn(*st))
@@ -68,7 +75,20 @@ class InfoView(_Base):
         async def fn(data: StalkerData, streams: StreamManager):
             return {"vod": data.has_vod, "series": data.has_series, "epg": data.has_epg, "max_streams": streams.max_streams}
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
+
+
+class PortalsView(_Base):
+    url = "/api/stalker/portals"
+    name = "api:stalker:portals"
+
+    async def get(self, request: web.Request) -> web.Response:
+        d = self.hass.data.get(DOMAIN)
+        if not d or "portals" not in d:
+            return _err("not_loaded", 503)
+        return web.json_response({"items": [
+            {"id": p.id, "title": p.title, "source": p.source} for p in d["portals"].values()
+        ]})
 
 
 class LiveView(_Base):
@@ -84,7 +104,7 @@ class LiveView(_Base):
             ]
             return {"genres": live["genres"], "channels": chans}
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class EpgView(_Base):
@@ -99,7 +119,7 @@ class EpgView(_Base):
             items = [p for p in (await data.guide()).get(channel_id, []) if p["stop"] > now][:3]
             return {"items": items or await data.short_epg(channel_id)}
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class NowPlayingView(_Base):
@@ -121,7 +141,7 @@ class NowPlayingView(_Base):
                         break
             return {"items": out}
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class GuideView(_Base):
@@ -147,7 +167,7 @@ class GuideView(_Base):
                 for i in ids
             }}  # fmt: skip
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class VodView(_Base):
@@ -176,7 +196,7 @@ class VodView(_Base):
                 "items": [{"id": i, "title": e.title, "logo": e.logo, "group": e.group} for i, e in part],
             }  # fmt: skip
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class SeriesListView(_Base):
@@ -192,7 +212,7 @@ class SeriesListView(_Base):
                 for sid, s in (await data.series()).items() if not q or q in s.title.lower()
             ]}  # fmt: skip
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
 
 class SeriesView(_Base):
@@ -213,11 +233,64 @@ class SeriesView(_Base):
                 ],
             }  # fmt: skip
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
+
+
+def _pid(hass: HomeAssistant, portal: str | None) -> str | None:
+    """The id of the asked portal (none given: the first one)."""
+    portals = (hass.data.get(DOMAIN) or {}).get("portals") or {}
+    return portal if portal in portals else (None if portal else next(iter(portals), None))
+
+
+def _portal_of(request: web.Request) -> str | None:
+    return request.query.get("portal") or None
 
 
 def _user(request: web.Request) -> str:
     return request["hass_user"].id
+
+
+class FavoritesView(_Base):
+    """Favourite channels of the signed-in user in one portal."""
+
+    url = "/api/stalker/favorites"
+    name = "api:stalker:favorites"
+
+    async def get(self, request: web.Request) -> web.Response:
+        user, portal = _user(request), _pid(self.hass, _portal_of(request))
+
+        async def fn(data: StalkerData, streams: StreamManager):
+            return {"ids": self.hass.data[DOMAIN]["favorites"].ids(user, portal)}
+
+        return await self._run(fn, _portal_of(request))
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            body: dict[str, Any] = await request.json()
+            channel_id, fav = str(body["id"]), body["fav"]
+            portal_arg = str(body["portal"]) if body.get("portal") else None
+        except (ValueError, KeyError, TypeError):
+            return _err("bad_request", 400)
+        if not isinstance(fav, bool):
+            return _err("bad_request", 400)
+        user, portal = _user(request), _pid(self.hass, portal_arg)
+
+        async def fn(data: StalkerData, streams: StreamManager):
+            favorites = self.hass.data[DOMAIN]["favorites"]
+            if fav and channel_id not in (await data.live())["channels"]:
+                raise NotFound
+            if not favorites.set(user, portal, channel_id, fav):
+                raise _TooMany
+            return {"ids": favorites.ids(user, portal)}
+
+        try:
+            return await self._run(fn, portal_arg)
+        except _TooMany:
+            return _err("too_many_favorites", 409)
+
+
+class _TooMany(Exception):
+    pass
 
 
 class ProgressView(_Base):
@@ -225,10 +298,10 @@ class ProgressView(_Base):
     name = "api:stalker:progress"
 
     async def get(self, request: web.Request) -> web.Response:
-        user = _user(request)
+        user, portal = _user(request), _pid(self.hass, _portal_of(request))
 
         async def fn(data: StalkerData, streams: StreamManager):
-            entries = self.hass.data[DOMAIN]["progress"].entries(user)
+            entries = self.hass.data[DOMAIN]["progress"].entries(user, portal)
             series = {}
             for sid in {e.get("sid") for e in entries.values() if e.get("sid")}:
                 if s := await data.series_detail(sid):
@@ -238,7 +311,7 @@ class ProgressView(_Base):
                 "resume": resume_list(entries, series),
             }  # fmt: skip
 
-        return await self._run(fn)
+        return await self._run(fn, _portal_of(request))
 
     async def post(self, request: web.Request) -> web.Response:
         """Save a position, or (done given) mark an item as watched / not watched."""
@@ -248,22 +321,23 @@ class ProgressView(_Base):
             done = body.get("done")
             pos, dur = float(body.get("pos", 0)), float(body.get("dur", 0))
             sid = str(body["sid"]) if body.get("sid") is not None else None
+            portal_arg = str(body["portal"]) if body.get("portal") else None
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
         if kind not in KINDS or (done is not None and not isinstance(done, bool)) or dur != dur or pos != pos:
             return _err("bad_request", 400)
-        user = _user(request)
+        user, portal = _user(request), _pid(self.hass, portal_arg)
 
         async def fn(data: StalkerData, streams: StreamManager):
             progress: Progress = self.hass.data[DOMAIN]["progress"]
             meta = await data.describe(kind, item_id, sid)
             if done is None:
-                progress.save(user, kind, item_id, pos, min(dur, MAX_DURATION), meta)
+                progress.save(user, portal, kind, item_id, pos, min(dur, MAX_DURATION), meta)
             else:
-                progress.mark(user, kind, item_id, done, meta)
+                progress.mark(user, portal, kind, item_id, done, meta)
             return {"ok": True}
 
-        return await self._run(fn)
+        return await self._run(fn, portal_arg)
 
 
 class PlayView(_Base):
@@ -277,6 +351,7 @@ class PlayView(_Base):
             start = max(0.0, float(body.get("start", 0)))
             hevc_ok = body.get("hevc") is True  # the player can decode HEVC itself
             sid = str(body["sid"]) if body.get("sid") is not None else None
+            portal_arg = str(body["portal"]) if body.get("portal") else None
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
         if kind not in ("live", "vod", "episode"):
@@ -298,7 +373,7 @@ class PlayView(_Base):
             }  # fmt: skip
 
         try:
-            return await self._run(fn)
+            return await self._run(fn, portal_arg)
         except _PlayFailed as err:
             return _err(err.code, 502)
 
@@ -318,11 +393,11 @@ class StopView(_Base):
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
 
-        async def fn(data: StalkerData, streams: StreamManager):
-            await streams.stop(sid)
-            return {"ok": True}
-
-        return await self._run(fn)
+        streams: StreamManager | None = (self.hass.data.get(DOMAIN) or {}).get("streams")
+        if streams is None:
+            return _err("not_loaded", 503)
+        await streams.stop(sid)
+        return web.json_response({"ok": True})
 
 
 class HlsView(HomeAssistantView):
@@ -337,10 +412,10 @@ class HlsView(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request: web.Request, sid: str, name: str) -> web.Response:
-        st = _state(self.hass)
-        if st is None or not SAFE_NAME.match(name):
+        streams: StreamManager | None = (self.hass.data.get(DOMAIN) or {}).get("streams")
+        if streams is None or not SAFE_NAME.match(name):
             return web.Response(status=404)
-        path = st[1].file_for(sid, name)
+        path = streams.file_for(sid, name)
         if path is None:
             return web.Response(status=404)
         try:
@@ -352,6 +427,6 @@ class HlsView(HomeAssistantView):
 
 
 def register_views(hass: HomeAssistant) -> None:
-    for view in (InfoView, LiveView, EpgView, NowPlayingView, GuideView, ProgressView, VodView, SeriesListView, SeriesView, PlayView,
+    for view in (PortalsView, InfoView, FavoritesView, LiveView, EpgView, NowPlayingView, GuideView, ProgressView, VodView, SeriesListView, SeriesView, PlayView,
                  StopView, HlsView):  # fmt: skip
         hass.http.register_view(view(hass))

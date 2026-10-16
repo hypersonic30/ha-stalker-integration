@@ -6,7 +6,8 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigFlowResult, ConfigSubentryFlow, SubentryFlowResult
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -21,6 +22,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_LIVE_M3U,
     CONF_MAC,
+    CONF_NAME,
     CONF_MAX_STREAMS,
     CONF_PASSWORD,
     CONF_PORTAL_URL,
@@ -37,6 +39,7 @@ from .const import (
     SOURCE_M3U,
     SOURCE_STALKER,
     SOURCE_XTREAM,
+    SUBENTRY_PORTAL,
 )
 from .sources import M3uLive, XtreamApi
 from .stalker import MAC_RE, StalkerAuthError, StalkerClient, StalkerError
@@ -56,6 +59,9 @@ def _common(d: dict[str, Any]) -> dict:
         vol.Required(CONF_TRANSCODE, default=d.get(CONF_TRANSCODE, DEFAULT_TRANSCODE)): BooleanSelector(),
     }
 
+
+
+_TITLES = {SOURCE_STALKER: "Stalker", SOURCE_M3U: "M3U", SOURCE_XTREAM: "Xtream"}
 
 
 def _schema(source: str, d: dict[str, Any]) -> vol.Schema:
@@ -79,14 +85,13 @@ def _schema(source: str, d: dict[str, Any]) -> vol.Schema:
             vol.Optional(CONF_VOD_M3U, default=d.get(CONF_VOD_M3U, "")): _URL,
             vol.Optional(CONF_SERIES_M3U, default=d.get(CONF_SERIES_M3U, "")): _URL,
         }
-    return vol.Schema({**fields, **_common(d)})
+    return vol.Schema({vol.Required(CONF_NAME, default=d.get(CONF_NAME, _TITLES[source])): _TEXT, **fields})
 
 
 def _clean(source: str, user_input: dict[str, Any]) -> dict[str, Any]:
     out = dict(user_input)
     out[CONF_SOURCE] = source
-    out[CONF_MAX_STREAMS] = int(out[CONF_MAX_STREAMS])
-    out[CONF_TRANSCODE] = bool(out.get(CONF_TRANSCODE, DEFAULT_TRANSCODE))
+    out[CONF_NAME] = (out.get(CONF_NAME) or _TITLES[source]).strip()
     if CONF_MAC in out:
         out[CONF_MAC] = out[CONF_MAC].strip().upper()
     for key in (*_URL_KEYS, CONF_USERNAME, CONF_PASSWORD):
@@ -117,47 +122,80 @@ async def _validate(hass, source: str, data: dict[str, Any]) -> str | None:
     return None
 
 
+def _main_schema(d: dict[str, Any]) -> vol.Schema:
+    return vol.Schema(_common(d))
+
+
 class StalkerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+    """Shared settings; the portals themselves are added as sub-entries."""
+
+    VERSION = 2
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(cls, config_entry) -> dict[str, type[ConfigSubentryFlow]]:
+        return {SUBENTRY_PORTAL: PortalSubentryFlow}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="Stalker IPTV", data=_shared(user_input))
+        return self.async_show_form(step_id="user", data_schema=_main_schema({}))
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        entry = self._get_reconfigure_entry()
+        if user_input is not None:
+            return self.async_update_reload_and_abort(entry, data=_shared(user_input))
+        return self.async_show_form(step_id="reconfigure", data_schema=_main_schema(dict(entry.data)))
+
+
+def _shared(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {
+        CONF_MAX_STREAMS: int(user_input[CONF_MAX_STREAMS]),
+        CONF_TRANSCODE: bool(user_input.get(CONF_TRANSCODE, DEFAULT_TRANSCODE)),
+    }
+
+
+class PortalSubentryFlow(ConfigSubentryFlow):
+    """"Add portal": Stalker (MAC), M3U + XMLTV or Xtream Codes; checked before saving."""
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         return self.async_show_menu(step_id="user", menu_options=[SOURCE_STALKER, SOURCE_M3U, SOURCE_XTREAM])
 
-    async def _step(self, source: str, user_input, reconfigure: bool) -> ConfigFlowResult:
+    async def _step(self, source: str, user_input, sub=None) -> SubentryFlowResult:
         errors: dict[str, str] = {}
-        entry = self._get_reconfigure_entry() if reconfigure else None
         if user_input is not None:
             data = _clean(source, user_input)
             if err := await _validate(self.hass, source, data):
                 errors["base"] = err
-            elif entry:
-                return self.async_update_reload_and_abort(entry, data=data)
             else:
-                return self.async_create_entry(title="Stalker IPTV", data=data)
-        defaults = user_input or (dict(entry.data) if entry else {})
+                title = data.pop(CONF_NAME)
+                if sub is not None:
+                    return self.async_update_and_abort(self._get_entry(), sub, title=title, data=data)
+                return self.async_create_entry(title=title, data=data)
+        defaults = user_input or ({**sub.data, CONF_NAME: sub.title} if sub else {})
         return self.async_show_form(
-            step_id=f"reconfigure_{source}" if reconfigure else source,
+            step_id=f"reconfigure_{source}" if sub else source,
             data_schema=_schema(source, defaults), errors=errors,
         )  # fmt: skip
 
-    async def async_step_stalker(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_STALKER, user_input, False)
+    async def async_step_stalker(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_STALKER, user_input)
 
-    async def async_step_m3u(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_M3U, user_input, False)
+    async def async_step_m3u(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_M3U, user_input)
 
-    async def async_step_xtream(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_XTREAM, user_input, False)
+    async def async_step_xtream(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_XTREAM, user_input)
 
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        source = self._get_reconfigure_entry().data.get(CONF_SOURCE, SOURCE_STALKER)
+    async def async_step_reconfigure(self, user_input=None) -> SubentryFlowResult:
+        source = self._get_reconfigure_subentry().data.get(CONF_SOURCE, SOURCE_STALKER)
         return await getattr(self, f"async_step_reconfigure_{source}")(user_input)
 
-    async def async_step_reconfigure_stalker(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_STALKER, user_input, True)
+    async def async_step_reconfigure_stalker(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_STALKER, user_input, self._get_reconfigure_subentry())
 
-    async def async_step_reconfigure_m3u(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_M3U, user_input, True)
+    async def async_step_reconfigure_m3u(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_M3U, user_input, self._get_reconfigure_subentry())
 
-    async def async_step_reconfigure_xtream(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return await self._step(SOURCE_XTREAM, user_input, True)
+    async def async_step_reconfigure_xtream(self, user_input=None) -> SubentryFlowResult:
+        return await self._step(SOURCE_XTREAM, user_input, self._get_reconfigure_subentry())

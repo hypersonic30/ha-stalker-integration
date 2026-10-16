@@ -1,142 +1,167 @@
 {
   "config": {
     "step": {
-      "stalker": {
-        "title": "Connect to a Stalker portal",
-        "description": "The MAC address stays in Home Assistant; the card never sees it.",
-        "data": {
-          "portal_url": "Portal URL",
-          "mac": "MAC address",
-          "vod_m3u": "Movies (M3U URL, optional)",
-          "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "portal_url": "e.g. portal.home/c/",
-          "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
-          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
-          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
-      "reconfigure_stalker": {
-        "title": "Change connection",
-        "description": "The MAC address stays in Home Assistant; the card never sees it.",
-        "data": {
-          "portal_url": "Portal URL",
-          "mac": "MAC address",
-          "vod_m3u": "Movies (M3U URL, optional)",
-          "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "portal_url": "e.g. portal.home/c/",
-          "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
-          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
-          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
-      "m3u": {
-        "title": "Connect an M3U playlist",
-        "description": "Plain playlists, e.g. from your provider or a tuner.",
-        "data": {
-          "live_m3u": "Live TV (M3U URL)",
-          "xmltv": "Programme guide (XMLTV URL, optional)",
-          "vod_m3u": "Movies (M3U URL, optional)",
-          "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "live_m3u": "M3U playlist with the TV channels.",
-          "xmltv": "XMLTV file (plain or gzip). Channels are matched by tvg-id, else by name. Leave empty for no guide.",
-          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
-          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
-      "reconfigure_m3u": {
-        "title": "Change connection",
-        "description": "Plain playlists, e.g. from your provider or a tuner.",
-        "data": {
-          "live_m3u": "Live TV (M3U URL)",
-          "xmltv": "Programme guide (XMLTV URL, optional)",
-          "vod_m3u": "Movies (M3U URL, optional)",
-          "series_m3u": "Series (M3U URL, optional)",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "live_m3u": "M3U playlist with the TV channels.",
-          "xmltv": "XMLTV file (plain or gzip). Channels are matched by tvg-id, else by name. Leave empty for no guide.",
-          "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
-          "series_m3u": "M3U playlist with the series. Leave empty for no series section.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
-      "xtream": {
-        "title": "Connect an Xtream Codes account",
-        "description": "Live TV, movies, series and the guide come from the server.",
-        "data": {
-          "server_url": "Server URL",
-          "username": "Username",
-          "password": "Password",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "server_url": "Address of the Xtream Codes server including port, e.g. provider.example:8080",
-          "username": "Your Xtream username.",
-          "password": "Your Xtream password. It stays in Home Assistant.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
-      "reconfigure_xtream": {
-        "title": "Change connection",
-        "description": "Live TV, movies, series and the guide come from the server.",
-        "data": {
-          "server_url": "Server URL",
-          "username": "Username",
-          "password": "Password",
-          "max_streams": "Simultaneous streams",
-          "transcode": "Re-encode unplayable video"
-        },
-        "data_description": {
-          "server_url": "Address of the Xtream Codes server including port, e.g. provider.example:8080",
-          "username": "Your Xtream username.",
-          "password": "Your Xtream password. It stays in Home Assistant.",
-          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one.",
-          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
-        }
-      },
       "user": {
-        "title": "Choose a source",
-        "description": "Where do your channels come from?",
-        "menu_options": {
-          "stalker": "Stalker portal (MAC address)",
-          "m3u": "M3U playlist + XMLTV",
-          "xtream": "Xtream Codes"
+        "title": "Stalker IPTV",
+        "description": "Settings for all portals. Add the portals themselves afterwards with \"Add portal\".",
+        "data": {
+          "max_streams": "Simultaneous streams",
+          "transcode": "Re-encode unplayable video"
+        },
+        "data_description": {
+          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one. Applies to all portals together.",
+          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
+        }
+      },
+      "reconfigure": {
+        "title": "Change settings",
+        "description": "Settings for all portals. Add the portals themselves afterwards with \"Add portal\".",
+        "data": {
+          "max_streams": "Simultaneous streams",
+          "transcode": "Re-encode unplayable video"
+        },
+        "data_description": {
+          "max_streams": "Most providers allow only one stream per account. A new stream ends the old one. Applies to all portals together.",
+          "transcode": "Movies with a codec the player cannot decode (e.g. HEVC) are converted to H.264 at 720p. Uses a lot of CPU; switch off to refuse such movies."
         }
       }
     },
-    "error": {
-      "invalid_url": "URL must start with http or https.",
-      "invalid_mac": "Invalid MAC address.",
-      "auth": "The server rejected the login.",
-      "cannot_connect": "Cannot reach the server.",
-      "no_channels": "The list contains no channels."
-    },
     "abort": {
-      "single_instance_allowed": "Only one source is supported.",
       "reconfigure_successful": "Saved."
+    }
+  },
+  "config_subentries": {
+    "portal": {
+      "entry_type": "Portal",
+      "initiate_flow": {
+        "user": "Add portal",
+        "reconfigure": "Edit portal"
+      },
+      "step": {
+        "user": {
+          "title": "Choose a source",
+          "description": "Where do the channels of this portal come from?",
+          "menu_options": {
+            "stalker": "Stalker portal (MAC address)",
+            "m3u": "M3U playlist + XMLTV",
+            "xtream": "Xtream Codes"
+          }
+        },
+        "stalker": {
+          "title": "Connect to a Stalker portal",
+          "description": "The MAC address stays in Home Assistant; the card never sees it.",
+          "data": {
+            "name": "Name",
+            "portal_url": "Portal URL",
+            "mac": "MAC address",
+            "vod_m3u": "Movies (M3U URL, optional)",
+            "series_m3u": "Series (M3U URL, optional)"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "portal_url": "e.g. portal.home/c/",
+            "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
+            "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+            "series_m3u": "M3U playlist with the series. Leave empty for no series section."
+          }
+        },
+        "reconfigure_stalker": {
+          "title": "Change connection",
+          "description": "The MAC address stays in Home Assistant; the card never sees it.",
+          "data": {
+            "name": "Name",
+            "portal_url": "Portal URL",
+            "mac": "MAC address",
+            "vod_m3u": "Movies (M3U URL, optional)",
+            "series_m3u": "Series (M3U URL, optional)"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "portal_url": "e.g. portal.home/c/",
+            "mac": "MAC address of your subscription, e.g. 00:1A:79:XX:XX:XX",
+            "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+            "series_m3u": "M3U playlist with the series. Leave empty for no series section."
+          }
+        },
+        "m3u": {
+          "title": "Connect an M3U playlist",
+          "description": "Plain playlists, e.g. from your provider or a tuner.",
+          "data": {
+            "name": "Name",
+            "live_m3u": "Live TV (M3U URL)",
+            "xmltv": "Programme guide (XMLTV URL, optional)",
+            "vod_m3u": "Movies (M3U URL, optional)",
+            "series_m3u": "Series (M3U URL, optional)"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "live_m3u": "M3U playlist with the TV channels.",
+            "xmltv": "XMLTV file (plain or gzip). Channels are matched by tvg-id, else by name. Leave empty for no guide.",
+            "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+            "series_m3u": "M3U playlist with the series. Leave empty for no series section."
+          }
+        },
+        "reconfigure_m3u": {
+          "title": "Change connection",
+          "description": "Plain playlists, e.g. from your provider or a tuner.",
+          "data": {
+            "name": "Name",
+            "live_m3u": "Live TV (M3U URL)",
+            "xmltv": "Programme guide (XMLTV URL, optional)",
+            "vod_m3u": "Movies (M3U URL, optional)",
+            "series_m3u": "Series (M3U URL, optional)"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "live_m3u": "M3U playlist with the TV channels.",
+            "xmltv": "XMLTV file (plain or gzip). Channels are matched by tvg-id, else by name. Leave empty for no guide.",
+            "vod_m3u": "M3U playlist with the movies. Leave empty for no movies section.",
+            "series_m3u": "M3U playlist with the series. Leave empty for no series section."
+          }
+        },
+        "xtream": {
+          "title": "Connect an Xtream Codes account",
+          "description": "Live TV, movies, series and the guide come from the server.",
+          "data": {
+            "name": "Name",
+            "server_url": "Server URL",
+            "username": "Username",
+            "password": "Password"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "server_url": "Address of the Xtream Codes server including port, e.g. provider.example:8080",
+            "username": "Your Xtream username.",
+            "password": "Your Xtream password. It stays in Home Assistant."
+          }
+        },
+        "reconfigure_xtream": {
+          "title": "Change connection",
+          "description": "Live TV, movies, series and the guide come from the server.",
+          "data": {
+            "name": "Name",
+            "server_url": "Server URL",
+            "username": "Username",
+            "password": "Password"
+          },
+          "data_description": {
+            "name": "How the portal is called in the card, e.g. Home or Provider B.",
+            "server_url": "Address of the Xtream Codes server including port, e.g. provider.example:8080",
+            "username": "Your Xtream username.",
+            "password": "Your Xtream password. It stays in Home Assistant."
+          }
+        }
+      },
+      "error": {
+        "invalid_url": "URL must start with http or https.",
+        "invalid_mac": "Invalid MAC address.",
+        "auth": "The server rejected the login.",
+        "cannot_connect": "Cannot reach the server.",
+        "no_channels": "The list contains no channels."
+      },
+      "abort": {
+        "reconfigure_successful": "Saved."
+      }
     }
   }
 }

@@ -4,14 +4,19 @@ Integration für ein **eigenes, bezahltes** Stalker-/Ministra-Portal: Live-TV mi
 mit Merkliste je Benutzer (Fortsetzen, gesehen).
 Gespielt wird in der [Stalker Card](https://github.com/hypersonic30/ha-stalker-card), auch in der Companion App.
 
-## Quellen
-Bei der Einrichtung wählst du, woher die Sender kommen:
+## Portale
+Die Integration wird einmal eingerichtet (Einstellungen für alle: gleichzeitige Streams, Umkodieren). Dazu fügst du mit **„Portal hinzufügen“** beliebig viele Portale an,
+z. B. dein Stalker-Portal und einen Xtream-Anbieter. Jedes Portal hat einen Namen; in der Karte wählst du, welches genutzt wird, und kannst jederzeit umschalten.
+Merkliste und Favoriten gelten je Benutzer **und** Portal. Das Limit gleichzeitiger Streams gilt für alle Portale zusammen.
+
+Jedes Portal hat eine dieser Quellen:
 - **Stalker-Portal** (MAC-Adresse): Live-TV über die Portal-API, Filme und Serien optional aus M3U-Listen.
 - **M3U-Liste + XMLTV**: Live-TV aus einer M3U-Liste, Programm aus einer XMLTV-Datei (auch `.gz`). Sender werden über `tvg-id`, sonst über den Namen zugeordnet.
   Filme und Serien optional aus weiteren M3U-Listen. Ohne XMLTV gibt es keinen Programm-Tab.
 - **Xtream Codes** (Server, Benutzer, Passwort): Live-TV, Filme, Serien und Programm (`xmltv.php`) kommen vom Server; Folgen werden beim Öffnen einer Serie geladen.
 
-Die Quelle lässt sich später nicht wechseln (Integration entfernen und neu einrichten); Adressen und Zugangsdaten änderst du mit „Neu konfigurieren“.
+Die Quelle eines Portals lässt sich später nicht wechseln (Portal entfernen und neu anlegen); Name, Adressen und Zugangsdaten änderst du beim Portal mit „Bearbeiten“.
+Beim Update von 0.3 oder älter wird dein bisheriges Portal automatisch zum ersten Portal; Merkliste und Einstellungen bleiben erhalten.
 Passwort und Stream-Adressen bleiben in Home Assistant. Streams dürfen nur von Servern kommen, die du eingetragen hast, oder von öffentlichen Servern aus deiner eigenen Liste;
 eine private Adresse (192.168…, localhost), die nur in einer Liste steht, wird abgelehnt.
 
@@ -32,6 +37,7 @@ eine private Adresse (192.168…, localhost), die nur in einer Liste steht, wird
 - **Merkliste je Benutzer**: Position und „gesehen“ (ab 92 %) für Filme und Folgen, gespeichert in `.storage/stalker_progress`.
   Jeder Home-Assistant-Benutzer hat seine eigene; Titel und Staffel/Folge ermittelt der Server, die Karte sendet nur IDs und Zeit.
   Unter „Weiterschauen“ stehen angefangene Filme und je Serie die angefangene oder die nächste Folge.
+- **Favoriten** (Live-TV) je Benutzer und Portal, gespeichert in `.storage/stalker_favorites`: Stern bei einem Sender, Chip „Favoriten“ in der Senderliste, im Programm stehen sie oben.
 
 ## Schutz vor Überlast
 - Standard: **1 Stream gleichzeitig**, höchstens 3. Ein neuer Stream beendet den alten, **bevor** das Portal einen neuen Link bekommt.
@@ -43,7 +49,7 @@ eine private Adresse (192.168…, localhost), die nur in einer Liste steht, wird
 
 ## Einrichtung
 HACS → Benutzerdefiniertes Repository → Integration, dann *Einstellungen → Geräte & Dienste → Stalker IPTV*:
-Portal-Adresse, MAC, optional die M3U-Adressen für Filme und Serien.
+zuerst die gemeinsamen Einstellungen, danach **Portal hinzufügen** (Stalker: Portal-Adresse, MAC, optional M3U-Adressen für Filme und Serien).
 
 ## Bekannte Grenzen
 - Untertitel (PGS) und Tonspur-Wahl fehlen noch; bei Mehrfach-Ton wird Deutsch bevorzugt.

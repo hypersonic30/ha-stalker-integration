@@ -41,3 +41,20 @@ def media(ffmpeg, tmp_path_factory):
           "-g", "25", "-c:a", "aac"])  # fmt: skip
     _make(ffmpeg, d / "hevc.mkv", [*v, *a[:4], "-t", "3", "-c:v", "libx265", "-c:a", "aac"])
     return d
+
+
+def portal_entry(portal: dict, title: str = "Test portal", *more: tuple[str, dict], **shared):
+    """A main entry (shared settings) with one portal sub-entry, plus optional further (title, data) portals."""
+    from types import MappingProxyType
+
+    from homeassistant.config_entries import ConfigSubentryData
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    subs = [ConfigSubentryData(data=MappingProxyType(d), subentry_type="portal", title=t, unique_id=None)
+            for t, d in ((title, portal), *more)]  # fmt: skip
+    return MockConfigEntry(domain="stalker", version=2, data={"max_streams": 1, **shared}, subentries_data=subs)
+
+
+def first_portal(hass):
+    from custom_components.stalker.const import DOMAIN
+    return next(iter(hass.data[DOMAIN]["portals"].values()))

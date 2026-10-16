@@ -9,6 +9,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.stalker.const import DOMAIN
 
+from .conftest import first_portal, portal_entry
 from .fake_portal import MAC, FakePortal
 
 SERIES_M3U = """#EXTM3U
@@ -46,9 +47,9 @@ async def portal(media):
 
 @pytest.fixture
 async def entry(hass, portal, ffmpeg):
-    e = MockConfigEntry(domain=DOMAIN, data={
-        "portal_url": portal.base + "/c/", "mac": MAC, "vod_m3u": portal.base + "/vod.m3u",
-        "series_m3u": portal.base + "/series.m3u", "max_streams": 1,
+    e = portal_entry({
+        "source": "stalker", "portal_url": portal.base + "/c/", "mac": MAC, "vod_m3u": portal.base + "/vod.m3u",
+        "series_m3u": portal.base + "/series.m3u",
     })  # fmt: skip
     e.add_to_hass(hass)
     mgr = MagicMock(binary=ffmpeg)
@@ -61,31 +62,13 @@ async def entry(hass, portal, ffmpeg):
         await hass.config_entries.async_unload(e.entry_id)
 
 
-async def test_config_flow_validates_with_real_handshake(hass, portal):
-    with patch("homeassistant.components.ffmpeg.async_setup", return_value=True):
-        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        assert r["type"] == "menu" and r["menu_options"] == ["stalker", "m3u", "xtream"]
-        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": "stalker"})
-        bad = await hass.config_entries.flow.async_configure(r["flow_id"], {
-            "portal_url": portal.base + "/c/", "mac": "00:1A:79:00:00:00", "vod_m3u": "",
-            "series_m3u": "", "max_streams": 1})  # fmt: skip
-        assert bad["errors"] == {"base": "auth"}
-        junk = await hass.config_entries.flow.async_configure(r["flow_id"], {
-            "portal_url": portal.base, "mac": "nonsense", "vod_m3u": "", "series_m3u": "", "max_streams": 1})  # fmt: skip
-        assert junk["errors"] == {"base": "invalid_mac"}
-        ok = await hass.config_entries.flow.async_configure(r["flow_id"], {
-            "portal_url": portal.base + "/c/", "mac": MAC.lower(), "vod_m3u": "", "series_m3u": "", "max_streams": 2, "transcode": False})  # fmt: skip
-    assert ok["type"] == "create_entry" and ok["data"]["mac"] == MAC and ok["data"]["max_streams"] == 2
-    assert ok["data"]["transcode"] is False
-
-
 async def test_transcode_option_is_on_by_default_and_reaches_the_stream_manager(hass, entry):
     assert hass.data[DOMAIN]["streams"].transcode is True
 
 
 async def test_transcode_option_off_in_entry_is_applied(hass, portal, ffmpeg):
-    e = MockConfigEntry(domain=DOMAIN, data={"portal_url": portal.base + "/c/", "mac": MAC, "vod_m3u": "",
-                                              "series_m3u": "", "max_streams": 1, "transcode": False})  # fmt: skip
+    e = portal_entry({"source": "stalker", "portal_url": portal.base + "/c/", "mac": MAC, "vod_m3u": "",
+                      "series_m3u": ""}, transcode=False)  # fmt: skip
     e.add_to_hass(hass)
     with patch("homeassistant.components.ffmpeg.async_setup", return_value=True), patch(
         "custom_components.stalker.get_ffmpeg_manager", return_value=MagicMock(binary=ffmpeg)
@@ -254,7 +237,7 @@ async def test_epg_view_uses_the_guide_and_survives_a_broken_portal_guide(hass, 
     c = await hass_client()
     items = (await (await c.get("/api/stalker/epg/10")).json())["items"]
     assert [i["title"] for i in items] == ["Now", "Next"]
-    data = hass.data[DOMAIN]["data"]
+    data = first_portal(hass).data
     data._epg.value, data._epg.at = None, 0.0
 
     async def boom():

@@ -10,7 +10,8 @@ from homeassistant.helpers.storage import Store
 from .m3u import Series
 
 STORE_KEY = "stalker_progress"
-STORE_VERSION = 1
+STORE_VERSION = 2
+LEGACY = "_legacy"  # progress from before portals existed; adopted by the first portal
 DONE_RATIO = 0.92  # watched this much = finished
 MIN_RESUME = 30  # seconds: less than this is "just opened it"
 MAX_ENTRIES = 1500  # per user; the oldest are dropped
@@ -23,10 +24,19 @@ def key_of(kind: str, item_id: str) -> str:
     return f"{kind}:{item_id}"
 
 
+class _ProgressStore(Store):
+    async def _async_migrate_func(self, old_major_version, old_minor_version, old_data):
+        if old_major_version < 2 and isinstance(old_data, dict):  # {user: items} -> {user: {portal: items}}
+            return {user: {LEGACY: items} for user, items in old_data.items()}
+        return old_data
+
+
 class Progress:
+    """{user: {portal id: {kind:id: entry}}}"""
+
     def __init__(self, hass: HomeAssistant) -> None:
-        self._store: Store = Store(hass, STORE_VERSION, STORE_KEY)
-        self._data: dict[str, dict[str, dict[str, Any]]] = {}
+        self._store: Store = _ProgressStore(hass, STORE_VERSION, STORE_KEY)
+        self._data: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
 
     async def load(self) -> None:
         stored = await self._store.async_load()
@@ -38,15 +48,29 @@ class Progress:
     def _changed(self) -> None:
         self._store.async_delay_save(lambda: self._data, SAVE_DELAY)
 
-    def entries(self, user: str) -> dict[str, dict[str, Any]]:
-        return self._data.get(user, {})
+    def adopt_legacy(self, portal: str) -> None:
+        """Entries saved before portals existed belong to the first portal."""
+        for mine in self._data.values():
+            if LEGACY in mine:
+                old = mine.pop(LEGACY)
+                mine.setdefault(portal, old)
+        self._changed()
 
-    def save(self, user: str, kind: str, item_id: str, pos: float, dur: float, meta: dict[str, Any]) -> None:
+    def prune(self, portals: set[str]) -> None:
+        """Forget portals that were removed (the legacy bucket stays until a portal adopts it)."""
+        for mine in self._data.values():
+            for pid in [p for p in mine if p not in portals and p != LEGACY]:
+                del mine[pid]
+
+    def entries(self, user: str, portal: str) -> dict[str, dict[str, Any]]:
+        return self._data.get(user, {}).get(portal, {})
+
+    def save(self, user: str, portal: str, kind: str, item_id: str, pos: float, dur: float, meta: dict[str, Any]) -> None:
         """Remember a position. `meta` (title, logo, sid, season, episode) comes from the server."""
         dur = max(0.0, dur)
         pos = min(max(0.0, pos), dur) if dur else max(0.0, pos)
         done = bool(dur) and pos >= dur * DONE_RATIO
-        mine = self._data.setdefault(user, {})
+        mine = self._data.setdefault(user, {}).setdefault(portal, {})
         mine[key_of(kind, item_id)] = {
             **meta, "pos": int(pos), "dur": int(dur), "done": done, "t": round(time.time(), 3),
         }  # fmt: skip
@@ -55,9 +79,9 @@ class Progress:
                 del mine[k]
         self._changed()
 
-    def mark(self, user: str, kind: str, item_id: str, done: bool, meta: dict[str, Any]) -> None:
+    def mark(self, user: str, portal: str, kind: str, item_id: str, done: bool, meta: dict[str, Any]) -> None:
         k = key_of(kind, item_id)
-        mine = self._data.setdefault(user, {})
+        mine = self._data.setdefault(user, {}).setdefault(portal, {})
         if not done:
             mine.pop(k, None)
         else:

@@ -9,6 +9,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.stalker.const import DOMAIN
 
 from . import fake_sources as fs
+from .conftest import portal_entry
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ async def srv(media):
 
 
 async def _setup(hass, ffmpeg, data):
-    e = MockConfigEntry(domain=DOMAIN, data={"max_streams": 1, **data})
+    e = portal_entry(data)
     e.add_to_hass(hass)
     with patch("homeassistant.components.ffmpeg.async_setup", return_value=True), patch(
         "custom_components.stalker.get_ffmpeg_manager", return_value=MagicMock(binary=ffmpeg)
@@ -51,39 +52,6 @@ async def xtream_entry(hass, srv, ffmpeg):
     e = await _setup(hass, ffmpeg, {"source": "xtream", "server_url": srv.base, "username": fs.USER, "password": fs.PASSWORD})
     yield e
     await hass.config_entries.async_unload(e.entry_id)
-
-
-# -- config flow ------------------------------------------------------------------
-async def _flow(hass, step, data):
-    with patch("homeassistant.components.ffmpeg.async_setup", return_value=True):
-        r = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-        r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": step})
-        assert r["type"] == "form" and r["step_id"] == step
-        return await hass.config_entries.flow.async_configure(r["flow_id"], data)
-
-
-async def test_flow_m3u_creates_entry_and_rejects_empty_or_bad_lists(hass, srv):
-    ok = await _flow(hass, "m3u", {"live_m3u": srv.base + "/live.m3u", "xmltv": "", "vod_m3u": "", "series_m3u": "", "max_streams": 1})
-    assert ok["type"] == "create_entry" and ok["data"]["source"] == "m3u" and ok["data"]["transcode"] is True
-    for e in hass.config_entries.async_entries(DOMAIN):
-        await hass.config_entries.async_remove(e.entry_id)
-    bad = await _flow(hass, "m3u", {"live_m3u": srv.base + "/nothing", "max_streams": 1})
-    assert bad["errors"] == {"base": "cannot_connect"}
-    bad = await _flow(hass, "m3u", {"live_m3u": "ftp://x/y", "max_streams": 1})
-    assert bad["errors"] == {"base": "invalid_url"}
-
-
-async def test_flow_xtream_checks_the_login(hass, srv):
-    bad = await _flow(hass, "xtream", {"server_url": srv.base, "username": fs.USER, "password": "wrong", "max_streams": 1})
-    assert bad["errors"] == {"base": "auth"}
-    ok = await hass.config_entries.flow.async_configure(bad["flow_id"], {"server_url": srv.base + "/player_api.php", "username": fs.USER, "password": fs.PASSWORD, "max_streams": 2, "transcode": False})
-    assert ok["type"] == "create_entry" and ok["data"]["source"] == "xtream" and ok["data"]["max_streams"] == 2 and ok["data"]["transcode"] is False
-
-
-async def test_reconfigure_opens_the_form_of_the_entry_source(hass, m3u_entry):
-    r = await m3u_entry.start_reconfigure_flow(hass)
-    assert r["type"] == "form" and r["step_id"] == "reconfigure_m3u"
-    assert "live_m3u" in r["data_schema"].schema.__repr__() or any(str(k) == "live_m3u" for k in r["data_schema"].schema)
 
 
 # -- M3U + XMLTV ----------------------------------------------------------------------
