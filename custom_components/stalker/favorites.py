@@ -42,3 +42,12 @@ class Favorites:
             ids.remove(channel_id)
         self._store.async_delay_save(lambda: self._data, SAVE_DELAY)
         return True
+
+    def reorder(self, user: str, portal: str, order: list[str]) -> bool:
+        """Store a new order; only a permutation of the current favourites is accepted."""
+        ids = self._data.get(user, {}).get(portal, [])
+        if len(order) != len(ids) or set(order) != set(ids):
+            return False
+        ids[:] = order
+        self._store.async_delay_save(lambda: self._data, SAVE_DELAY)
+        return True

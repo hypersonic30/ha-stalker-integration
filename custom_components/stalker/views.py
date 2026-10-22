@@ -267,13 +267,30 @@ class FavoritesView(_Base):
     async def post(self, request: web.Request) -> web.Response:
         try:
             body: dict[str, Any] = await request.json()
-            channel_id, fav = str(body["id"]), body["fav"]
             portal_arg = str(body["portal"]) if body.get("portal") else None
+            order = body.get("order")
+            if order is not None:
+                if not isinstance(order, list) or not all(isinstance(i, str) for i in order):
+                    return _err("bad_request", 400)
+            else:
+                channel_id, fav = str(body["id"]), body["fav"]
         except (ValueError, KeyError, TypeError):
             return _err("bad_request", 400)
-        if not isinstance(fav, bool):
+        if order is None and not isinstance(fav, bool):
             return _err("bad_request", 400)
         user, portal = _user(request), _pid(self.hass, portal_arg)
+
+        if order is not None:
+            async def reorder(data: StalkerData, streams: StreamManager):
+                favorites = self.hass.data[DOMAIN]["favorites"]
+                if not favorites.reorder(user, portal, order):
+                    raise _BadOrder
+                return {"ids": favorites.ids(user, portal)}
+
+            try:
+                return await self._run(reorder, portal_arg)
+            except _BadOrder:
+                return _err("bad_request", 400)
 
         async def fn(data: StalkerData, streams: StreamManager):
             favorites = self.hass.data[DOMAIN]["favorites"]
@@ -290,6 +307,10 @@ class FavoritesView(_Base):
 
 
 class _TooMany(Exception):
+    pass
+
+
+class _BadOrder(Exception):
     pass
 
 

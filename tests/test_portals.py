@@ -199,6 +199,21 @@ async def test_favorites_per_user_and_portal(hass, two, hass_client):
     assert (await post(id="999", fav=False, portal=a)).status == 200  # removing something unknown is fine
 
 
+async def test_favorites_can_be_reordered(hass, two, hass_client):
+    e, ids = two
+    a = ids["Zuhause"]
+    c = await hass_client()
+    post = lambda **k: c.post("/api/stalker/favorites", json=k)  # noqa: E731
+    await post(id="11", fav=True, portal=a)
+    await post(id="10", fav=True, portal=a)
+    assert (await (await post(order=["10", "11"], portal=a)).json()) == {"ids": ["10", "11"]}
+    assert (await (await c.get(f"/api/stalker/favorites?portal={a}")).json()) == {"ids": ["10", "11"]}
+    # only a permutation of the current list is accepted
+    for bad in (["10"], ["10", "11", "12"], ["10", "10"], ["10", "99"], "10,11", [10, 11]):
+        assert (await post(order=bad, portal=a)).status == 400, bad
+    assert (await (await c.get(f"/api/stalker/favorites?portal={a}")).json()) == {"ids": ["10", "11"]}
+
+
 async def test_favorites_require_login_and_are_capped(hass, two, hass_client, hass_client_no_auth):
     e, ids = two
     anon = await hass_client_no_auth()
